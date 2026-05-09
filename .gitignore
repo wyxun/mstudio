@@ -1,0 +1,10 @@
+*.o
+*.elf
+*.bin
+*.log
+*.hex
+*.out
+*.map
+CLAUDE.md
+*.exe
+/build
