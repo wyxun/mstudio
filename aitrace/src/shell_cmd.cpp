@@ -14,6 +14,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <fcntl.h>
 #define SOCKET int
 #define INVALID_SOCKET (-1)
 #define closesocket close
@@ -57,7 +58,7 @@ static SOCKET ConnectTCP(const char* host, int port) {
     fd_set wset, eset;
     FD_ZERO(&wset); FD_SET(s, &wset);
     FD_ZERO(&eset); FD_SET(s, &eset);
-    timeval tv = {1, 0}; // 1s timeout
+    timeval tv = {1, 0};
     select((int)(s + 1), nullptr, &wset, &eset, &tv);
 
     if (!FD_ISSET(s, &wset)) {
@@ -65,28 +66,6 @@ static SOCKET ConnectTCP(const char* host, int port) {
         return INVALID_SOCKET;
     }
     return s;
-}
-
-static std::string RecvAll(SOCKET s, int timeout_ms) {
-    std::string result;
-    char buf[4096];
-    auto deadline = std::chrono::steady_clock::now()
-                  + std::chrono::milliseconds(timeout_ms);
-
-    while (std::chrono::steady_clock::now() < deadline) {
-        fd_set rset;
-        FD_ZERO(&rset); FD_SET(s, &rset);
-        timeval tv = {0, 100000}; // 100ms
-        int ret = select((int)(s + 1), &rset, nullptr, nullptr, &tv);
-        if (ret <= 0) {
-            if (!result.empty()) break; // Got some data, no more coming
-            continue;
-        }
-        int bytes = recv(s, buf, sizeof(buf) - 1, 0);
-        if (bytes <= 0) break;
-        result.append(buf, bytes);
-    }
-    return result;
 }
 
 int shell_main(int argc, char* argv[]) {
@@ -109,18 +88,47 @@ int shell_main(int argc, char* argv[]) {
         return 1;
     }
 
-    int sent = send(s, cmd.c_str(), (int)cmd.size(), 0);
-    if (sent < 0) {
+    if (send(s, cmd.c_str(), (int)cmd.size(), 0) < 0) {
         std::cerr << "Failed to send command.\n";
         closesocket(s);
         return 1;
     }
 
-    // Read response with 2s total timeout
-    std::string response = RecvAll(s, 2000);
-    std::cout << response;
-    if (!response.empty() && response.back() != '\n') std::cout << "\n";
+    // Poll for response like network_mgr does: continuous select + recv
+    // with 50ms idle timeout between data chunks
+    auto deadline = std::chrono::steady_clock::now()
+                  + std::chrono::milliseconds(5000);
+    bool got_data = false;
+    char buf[4096];
 
+    while (std::chrono::steady_clock::now() < deadline) {
+        fd_set rset;
+        FD_ZERO(&rset); FD_SET(s, &rset);
+        timeval tv = {0, 50000}; // 50ms poll
+        int ret = select((int)(s + 1), &rset, nullptr, nullptr, &tv);
+        if (ret > 0 && FD_ISSET(s, &rset)) {
+            int n = recv(s, buf, sizeof(buf) - 1, 0);
+            if (n > 0) {
+                buf[n] = 0;
+                std::cout << buf;
+                got_data = true;
+                // Reset deadline after receiving data — wait up to 500ms more
+                deadline = std::chrono::steady_clock::now()
+                         + std::chrono::milliseconds(500);
+            } else if (n == 0 || (n < 0
+#ifdef _WIN32
+                && WSAGetLastError() != WSAEWOULDBLOCK
+#else
+                && errno != EAGAIN && errno != EWOULDBLOCK
+#endif
+            )) {
+                break; // Connection closed or error
+            }
+        }
+        if (got_data && std::chrono::steady_clock::now() > deadline) break;
+    }
+
+    if (!got_data) std::cout << "(no response from firmware)\n";
     closesocket(s);
     return 0;
 }
