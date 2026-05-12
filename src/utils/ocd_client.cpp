@@ -102,9 +102,10 @@ std::string OcdClient::StripTelnet(const std::string& data) {
     out.reserve(data.size());
     for (size_t i = 0; i < data.size(); i++) {
         if ((unsigned char)data[i] == 0xFF && i + 2 < data.size()) {
-            i += 2;
+            i += 2; // Skip IAC + command + option
             continue;
         }
+        if ((unsigned char)data[i] == 0x00) continue; // Skip NUL bytes
         out += data[i];
     }
     return out;
@@ -113,22 +114,26 @@ std::string OcdClient::StripTelnet(const std::string& data) {
 std::string OcdClient::RecvUntilTimeout(int timeout_ms) {
     std::string result;
     char buf[4096];
-    int max_iter = 100;
+    int idle_loops = 0;
+    const int max_idle = timeout_ms / 100; // timeout_ms / poll_interval
 
-    while (max_iter-- > 0) {
+    while (idle_loops < max_idle) {
         fd_set read_set;
         FD_ZERO(&read_set);
         FD_SET(sock_, &read_set);
-        int chunk_ms = result.empty() ? timeout_ms : 500;
-        timeval tv = {(long)(chunk_ms / 1000), (long)((chunk_ms % 1000) * 1000)};
+        timeval tv = {0, 100000}; // 100ms poll
 
         int ret = select((int)(sock_ + 1), &read_set, NULL, NULL, &tv);
-        if (ret <= 0) break;
+        if (ret <= 0) { idle_loops++; continue; }
 
         int bytes = recv(sock_, buf, sizeof(buf) - 1, 0);
-        if (bytes <= 0) break;
+        if (bytes <= 0) { idle_loops++; continue; }
 
         result.append(buf, bytes);
+        idle_loops = 0; // Reset on data
+        // Stop when we see the OpenOCD prompt
+        if (result.find("\n> ") != std::string::npos ||
+            result.find("\r> ") != std::string::npos) break;
     }
 
     return StripTelnet(result);
@@ -136,6 +141,9 @@ std::string OcdClient::RecvUntilTimeout(int timeout_ms) {
 
 std::string OcdClient::SendCommand(const std::string& cmd) {
     if (sock_ == INVALID_SOCKET) return "";
+
+    // Drain any leftover data from previous response
+    DrainPending();
 
     std::string line = cmd + "\r\n";
     int sent = send(sock_, line.c_str(), (int)line.size(), 0);
@@ -145,6 +153,20 @@ std::string OcdClient::SendCommand(const std::string& cmd) {
     }
 
     return RecvUntilTimeout(2000);
+}
+
+void OcdClient::DrainPending() {
+    char buf[256];
+    timeval tv = {0, 50000}; // 50ms
+    fd_set rs;
+    FD_ZERO(&rs);
+    FD_SET(sock_, &rs);
+    while (select((int)(sock_ + 1), &rs, NULL, NULL, &tv) > 0) {
+        recv(sock_, buf, sizeof(buf), 0);
+        tv = {0, 50000};
+        FD_ZERO(&rs);
+        FD_SET(sock_, &rs);
+    }
 }
 
 bool OcdClient::Halt() {
@@ -210,13 +232,11 @@ uint32_t OcdClient::ReadMem32(uint32_t addr) {
     snprintf(buf, sizeof(buf), "mrw 0x%08X", addr);
     auto response = SendCommand(buf);
 
-    // Response format: "0x20000000: 0x12345678" — extract value after colon
-    auto colon = response.rfind(':');
-    if (colon != std::string::npos) {
-        auto pos = response.find("0x", colon);
-        if (pos != std::string::npos) {
-            return std::stoul(response.substr(pos), nullptr, 16);
-        }
+    // mrw response is just "0xVALUE" (no colon)
+    auto pos = response.rfind("0x");
+    if (pos != std::string::npos) {
+        try { return std::stoul(response.substr(pos), nullptr, 16); }
+        catch (...) {}
     }
     return 0;
 }
@@ -236,11 +256,9 @@ std::vector<uint32_t> OcdClient::ReadMemBlock32(uint32_t addr, int count) {
         std::istringstream vs(line.substr(colon + 1));
         std::string word;
         while (vs >> word) {
-            // Skip words that aren't valid hex (e.g. prompt echoes)
-            if (word.size() >= 3 && word[0] == '0' && word[1] == 'x') {
-                try { result.push_back(std::stoul(word, nullptr, 16)); }
-                catch (...) {}
-            }
+            // mdw outputs plain hex without 0x prefix
+            try { result.push_back(std::stoul(word, nullptr, 16)); }
+            catch (...) {}
         }
     }
     return result;

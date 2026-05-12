@@ -47,6 +47,7 @@ private:
     SOCKET sock_ = INVALID_SOCKET;
     std::string StripTelnet(const std::string& data);
     std::string RecvUntilTimeout(int timeout_ms = 300);
+    void DrainPending();
 };
 
 #endif // OCD_CLIENT_H
