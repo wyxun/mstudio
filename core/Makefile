@@ -1,7 +1,7 @@
 # Builds libmstudiocore.a from original source files in ../src/
 MSYS64_PATH = D:/software/msys64
 CXX = $(MSYS64_PATH)/mingw64/bin/clang++
-AR = $(MSYS64_PATH)/mingw64/bin/llvm-ar
+AR = $(MSYS64_PATH)/mingw64/bin/ar
 CFLAGS = -Wall -Wextra -O2 -g
 CXXFLAGS = -std=c++17 $(CFLAGS)
 
