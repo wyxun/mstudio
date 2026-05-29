@@ -37,7 +37,8 @@ ALL_SRCS = $(SRCS) $(IMGUI_SRCS) $(IMPLOT_SRCS)
 OBJS = $(addprefix $(BUILD_DIR)/, $(addsuffix .o, $(notdir $(ALL_SRCS))))
 
 # Libraries
-LIBS = -lmingw32 -lSDL2main -lSDL2 -lws2_32 -lopengl32 -lcomdlg32 -mwindows
+LIBS = -static -lmingw32 -lSDL2main -lSDL2 -limm32 -lole32 -loleaut32 -luuid -lversion -lwinmm -lsetupapi -lshell32 -ldinput8 -lgdi32 -ladvapi32 -lws2_32 -lopengl32 -lcomdlg32 -mwindows
+
 
 TARGET = mstudio.exe
 
