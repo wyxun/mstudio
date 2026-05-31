@@ -10,10 +10,19 @@
 #include <cctype>
 
 SerialPanel::SerialPanel(SharedState& s) : Panel(s), macros_(kMacroCount) {
-    // Initialize default macro presets
+    // 注入芯片开发/工控仪器调试中高频使用的默认指令预设
+    const char* default_labels[kMacroCount] = {
+        "AT", "PING", "IDN", "RST", "VER", "STAT", "IP", "HELP",
+        "M9", "M10", "M11", "M12", "M13", "M14", "M15", "M16"
+    };
+    const char* default_contents[kMacroCount] = {
+        "AT", "ping", "*IDN?", "RESET", "GET_VER", "GET_STATUS", "AT+CIFSR", "help",
+        "Command 9", "Command 10", "Command 11", "Command 12", "Command 13", "Command 14", "Command 15", "Command 16"
+    };
+
     for (int i = 0; i < kMacroCount; ++i) {
-        snprintf(macros_[i].label, sizeof(macros_[i].label), "M%d", i + 1);
-        snprintf(macros_[i].content, sizeof(macros_[i].content), "Command %d", i + 1);
+        snprintf(macros_[i].label, sizeof(macros_[i].label), "%s", default_labels[i]);
+        snprintf(macros_[i].content, sizeof(macros_[i].content), "%s", default_contents[i]);
     }
 
     // Load configs (serial port, baudrate, custom macros)
@@ -581,6 +590,9 @@ void SerialPanel::Render() {
 
     ImGui::Separator();
 
+    // 记录 Columns 开始前的 Y 轴垂直起点，作为右栏强制置顶对齐的基准物理坐标
+    float start_y = ImGui::GetCursorPosY();
+
     // ==========================================
     // COLUMNS: Left (Console) & Right (Macros)
     // ==========================================
@@ -596,6 +608,8 @@ void SerialPanel::Render() {
     // ------------------------------------------
     // LEFT COLUMN: Console and TX Transmitter
     // ------------------------------------------
+    ImGui::BeginGroup(); // 开启左立柱 Group 打包隔离，锁定高度边界
+
     ImGui::Checkbox("HEX RX", &show_hex_);
     ImGui::SameLine();
     ImGui::Checkbox("Timestamp", &show_timestamp_);
@@ -625,8 +639,13 @@ void SerialPanel::Render() {
         }
     }
 
+    // 精确获取此时左栏真正的垂直剩余空间，减去底部 Transmitter 发送区与状态条 (约 3.6f 帧高度)
+    float avail_h_left = ImGui::GetContentRegionAvail().y;
+    float rx_height = avail_h_left - ImGui::GetFrameHeightWithSpacing() * 3.6f;
+    if (rx_height < 100.0f) rx_height = 100.0f;
+
     // Rx Display console
-    ImGui::BeginChild("RxFrame", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() * 3.5f), true, ImGuiWindowFlags_HorizontalScrollbar);
+    ImGui::BeginChild("RxFrame", ImVec2(0, rx_height), true, ImGuiWindowFlags_HorizontalScrollbar);
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.2f, 0.9f, 0.3f, 1.0f)); // Vintage terminal green tint
     ImGui::TextUnformatted(rx_display_text_.c_str());
     ImGui::PopStyleColor();
@@ -658,32 +677,43 @@ void SerialPanel::Render() {
     ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Status: %s | RX Count: %zu Bytes | TX Count: %zu Bytes", 
                        is_open_ ? "CONNECTED" : "DISCONNECTED", rx_count_.load(), tx_count_.load());
 
+    ImGui::EndGroup(); // 结束左立柱 Group
+
     // ------------------------------------------
     // RIGHT COLUMN: 16 SSCOM-style Macro Panel
     // ------------------------------------------
     ImGui::NextColumn();
+    ImGui::SetCursorPosY(start_y); // 强行物理置顶重设，彻底纠正 Columns 的同步偏下 Bug！
+
+    ImGui::BeginGroup(); // 开启右立柱 Group 打包隔离，重置 Y 轴起点至最顶端
 
     ImGui::Text("Quick Macros (16 Presets)");
     ImGui::Separator();
 
-    ImGui::BeginChild("MacrosFrame", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() * 2.0f), true);
+    // 在绘制完标题和分割线后，精确获取右栏此时真正的垂直可用空间，留出底部 Save 按钮 (约 1.5f 帧高度)
+    float avail_h_right = ImGui::GetContentRegionAvail().y;
+    float macro_height = avail_h_right - ImGui::GetFrameHeightWithSpacing() * 1.5f;
+    if (macro_height < 100.0f) macro_height = 100.0f;
+
+    ImGui::BeginChild("MacrosFrame", ImVec2(0, macro_height), true);
     for (int i = 0; i < kMacroCount; ++i) {
         ImGui::PushID(i);
 
-        // 1. Label column (max width: 60)
-        ImGui::SetNextItemWidth(60);
+        float label_w = 42.0f;
+        float send_w = 46.0f;
+        // 动态计算 Cmd 框宽度，使其在单列下完美平铺并拉伸贴边
+        float cmd_w = ImGui::GetContentRegionAvail().x - label_w - send_w - (ImGui::GetStyle().ItemSpacing.x * 2.0f);
+        if (cmd_w < 50.0f) cmd_w = 50.0f;
+
+        ImGui::SetNextItemWidth(label_w);
         ImGui::InputText("##M_Label", macros_[i].label, sizeof(macros_[i].label));
         
         ImGui::SameLine();
-
-        // 2. Command input (flexible width)
-        ImGui::SetNextItemWidth(ImGui::GetColumnWidth() - 170.0f);
+        ImGui::SetNextItemWidth(cmd_w);
         ImGui::InputText("##M_Cmd", macros_[i].content, sizeof(macros_[i].content));
 
         ImGui::SameLine();
-
-        // 3. Send button
-        if (ImGui::Button("Send", ImVec2(60, 0))) {
+        if (ImGui::Button("Send", ImVec2(send_w, 0))) {
             SendDataString(macros_[i].content, tx_hex_mode_ == 1);
         }
 
@@ -695,6 +725,8 @@ void SerialPanel::Render() {
     if (ImGui::Button("Save Macros & Config", ImVec2(-FLT_MIN, 0))) {
         SaveConfig();
     }
+
+    ImGui::EndGroup(); // 结束右立柱 Group
 
     ImGui::Columns(1); // Restore columns
     ImGui::End();
