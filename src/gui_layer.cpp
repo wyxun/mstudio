@@ -5,6 +5,7 @@
 #include "panels/register_panel.h"
 #include "panels/variable_panel.h"
 #include "panels/map_panel.h"
+#include "panels/serial_panel.h"
 #include "imgui.h"
 
 GuiLayer::GuiLayer() {
@@ -16,6 +17,7 @@ GuiLayer::GuiLayer() {
     panels_.push_back(std::make_unique<RegisterPanel>(state_));
     panels_.push_back(std::make_unique<VariablePanel>(state_));
     panels_.push_back(std::make_unique<MapPanel>(state_));
+    panels_.push_back(std::make_unique<SerialPanel>(state_));
 }
 
 void GuiLayer::SetupTheme() {

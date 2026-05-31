@@ -1,6 +1,6 @@
 [submodule "thirdparty/implot"]
 	path = thirdparty/implot
-	url = https://gh-proxy.com/https://github.com/epezent/implot.git
+	url = https://ghfast.top/https://github.com/epezent/implot.git
 [submodule "thirdparty/imgui"]
 	path = thirdparty/imgui
-	url = https://gh-proxy.com/https://github.com/ocornut/imgui.git
+	url = https://ghfast.top/https://github.com/ocornut/imgui.git

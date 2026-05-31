@@ -9,6 +9,7 @@ int ocd_main(int argc, char* argv[]);
 int gdb_main(int argc, char* argv[]);
 int map_main(int argc, char* argv[]);
 int crash_main(int argc, char* argv[]);
+int serial_main(int argc, char* argv[]);
 
 static void PrintUsage() {
     std::cout << "aitrace — AI-driven MCU debugging CLI\n\n"
@@ -23,7 +24,9 @@ static void PrintUsage() {
               << "  gdb   connect|break <loc>|continue|step|print <expr>|bt|detach\n\n"
               << "Analysis:\n"
               << "  map   resolve <elf> <addr...>|info <elf_or_map>\n"
-              << "  crash report --pc=<hex> --lr=<hex> --sp=<hex> --elf=<path>\n";
+              << "  crash report --pc=<hex> --lr=<hex> --sp=<hex> --elf=<path>\n"
+              << "  serial --port=<COMx> [--baud=<rate>] [--duration=<sec>] [--hex] [--ascii]\n"
+              << "                       Listen to serial port data (passive, zero intrusion)\n";
 }
 
 int main(int argc, char* argv[]) {
@@ -40,6 +43,7 @@ int main(int argc, char* argv[]) {
     if (cmd == "gdb")    return gdb_main(argc - 1, argv + 1);
     if (cmd == "map")    return map_main(argc - 1, argv + 1);
     if (cmd == "crash")  return crash_main(argc - 1, argv + 1);
+    if (cmd == "serial") return serial_main(argc - 1, argv + 1);
 
     std::cerr << "Unknown command: " << cmd << "\n";
     PrintUsage();
