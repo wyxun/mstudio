@@ -6,8 +6,54 @@
 #include <SDL2/SDL_opengl.h>
 #include <iostream>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 #include "network_mgr.h"
 #include "gui_layer.h"
+
+#ifdef _WIN32
+/* 从 Win32 RC 资源加载图标并转换为 SDL_Surface，供 SDL_SetWindowIcon 使用 */
+static SDL_Surface* LoadIconFromResource(int resource_id) {
+    HICON hIcon = (HICON)LoadImageA(
+        GetModuleHandleA(NULL),
+        MAKEINTRESOURCEA(resource_id),
+        IMAGE_ICON, 32, 32, LR_DEFAULTCOLOR);
+    if (!hIcon) return nullptr;
+
+    ICONINFO ii = {};
+    if (!GetIconInfo(hIcon, &ii)) {
+        DestroyIcon(hIcon);
+        return nullptr;
+    }
+
+    BITMAP bm = {};
+    GetObject(ii.hbmColor, sizeof(bm), &bm);
+    int w = bm.bmWidth, h = bm.bmHeight;
+
+    SDL_Surface* surf = SDL_CreateRGBSurface(
+        0, w, h, 32,
+        0x00FF0000, 0x0000FF00, 0x000000FF, 0xFF000000);
+    if (surf) {
+        HDC hdc = CreateCompatibleDC(NULL);
+        BITMAPINFO bi = {};
+        bi.bmiHeader.biSize        = sizeof(bi.bmiHeader);
+        bi.bmiHeader.biWidth       =  w;
+        bi.bmiHeader.biHeight      = -h;  /* top-down */
+        bi.bmiHeader.biPlanes      = 1;
+        bi.bmiHeader.biBitCount    = 32;
+        bi.bmiHeader.biCompression = BI_RGB;
+        GetDIBits(hdc, ii.hbmColor, 0, h, surf->pixels, &bi, DIB_RGB_COLORS);
+        DeleteDC(hdc);
+    }
+
+    DeleteObject(ii.hbmColor);
+    DeleteObject(ii.hbmMask);
+    DestroyIcon(hIcon);
+    return surf;
+}
+#endif
 
 int main(int argc, char** argv) {
     (void)argc; (void)argv;
@@ -29,6 +75,15 @@ int main(int argc, char** argv) {
     SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
     SDL_WindowFlags window_flags = (SDL_WindowFlags)(SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
     SDL_Window* window = SDL_CreateWindow("MStudio - MODUS Debug Workbench", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1280, 720, window_flags);
+
+#ifdef _WIN32
+    /* 加载 RC 资源中的图标 (IDI_ICON1 = 1) 并绑定到 SDL2 窗口 */
+    SDL_Surface* icon_surf = LoadIconFromResource(1);
+    if (icon_surf) {
+        SDL_SetWindowIcon(window, icon_surf);
+        SDL_FreeSurface(icon_surf);
+    }
+#endif
     SDL_GLContext gl_context = SDL_GL_CreateContext(window);
     SDL_GL_MakeCurrent(window, gl_context);
     SDL_GL_SetSwapInterval(1); // Enable vsync
