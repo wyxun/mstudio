@@ -3,6 +3,7 @@
 
 MSYS64_PATH = D:/software/msys64
 CXX = $(MSYS64_PATH)/mingw64/bin/clang++
+WINDRES = $(MSYS64_PATH)/mingw64/bin/windres
 CFLAGS = -Wall -Wextra -O2 -g
 CXXFLAGS = -std=c++17 $(CFLAGS)
 
@@ -35,6 +36,12 @@ ALL_SRCS = $(SRCS) $(IMGUI_SRCS) $(IMPLOT_SRCS)
 
 # Object files (Flattened in build directory)
 OBJS = $(addprefix $(BUILD_DIR)/, $(addsuffix .o, $(notdir $(ALL_SRCS))))
+USE_ICON ?= 0
+ifeq ($(USE_ICON), 1)
+    RES_OBJ = $(BUILD_DIR)/mstudio_rc.o
+else
+    RES_OBJ =
+endif
 
 # Libraries
 LIBS = -static -lmingw32 -lSDL2main -lSDL2 -limm32 -lole32 -loleaut32 -luuid -lversion -lwinmm -lsetupapi -lshell32 -ldinput8 -lgdi32 -ladvapi32 -lws2_32 -lopengl32 -lcomdlg32 -mwindows
@@ -48,9 +55,14 @@ check_deps:
 	@if [ ! -f $(THIRD_PARTY_DIR)/imgui/imgui.cpp ]; then echo "[ERROR] ImGui submodule missing. Please run 'git submodule update --init' or manually download to thirdparty/imgui"; exit 1; fi
 	@if [ ! -f $(THIRD_PARTY_DIR)/implot/implot.cpp ]; then echo "[ERROR] ImPlot submodule missing. Please run 'git submodule update --init' or manually download to thirdparty/implot"; exit 1; fi
 
-$(TARGET): $(OBJS)
+$(TARGET): $(OBJS) $(RES_OBJ)
 	@mkdir -p $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) $(OBJS) -o $@ $(LIBS)
+	$(CXX) $(CXXFLAGS) $(OBJS) $(RES_OBJ) -o $@ $(LIBS)
+
+# Build rule for Windows resource file
+$(RES_OBJ): mstudio.rc mstudio.ico
+	@mkdir -p $(BUILD_DIR)
+	$(WINDRES) -i $< -o $@
 
 # VPATH tells make where to look for source files
 vpath %.cpp $(SRC_DIR) $(SRC_DIR)/panels $(SRC_DIR)/utils $(THIRD_PARTY_DIR)/imgui $(THIRD_PARTY_DIR)/imgui/backends $(THIRD_PARTY_DIR)/implot
