@@ -80,22 +80,22 @@ def main():
     canvas = Image.new('L', (size, size), 0)
     draw = ImageDraw.Draw(canvas)
     
-    # 面板底色填为轻微的暗灰 (35)，这在抖动后会产生极佳的复古液晶颗粒质感
+    # 面板底色填为轻微的暗灰 (52)，这在抖动后会产生质感极强的复古点阵颗粒背景
     # 在掩膜内部填充底色
     for y in range(size):
         for x in range(size):
             if mask_layer.getpixel((x, y)) == 1:
-                canvas.putpixel((x, y), 35)
+                canvas.putpixel((x, y), 52)
                 
     # 3. 绘制背景微弱的示波器格线 (频率 32 像素)
     for i in range(32, size - 16, 32):
         for pos in range(16, size - 16, 4):
-            # 纵线 (仅在面板掩膜内绘制)
+            # 纵线 (仅在面板掩膜内绘制，提高亮度到 95 增强对比度)
             if mask_layer.getpixel((i, pos)) == 1:
-                canvas.putpixel((i, pos), 65)
+                canvas.putpixel((i, pos), 95)
             # 横线
             if mask_layer.getpixel((pos, i)) == 1:
-                canvas.putpixel((pos, i), 65)
+                canvas.putpixel((pos, i), 95)
             
     # 4. 绘制示波器阻尼波形 (横穿面板，极具科技感)
     wave_pixels = []
@@ -108,7 +108,8 @@ def main():
         pt1, pt2 = wave_pixels[i], wave_pixels[i+1]
         # 仅当两个端点都在面板内时绘制
         if mask_layer.getpixel(pt1) == 1 and mask_layer.getpixel(pt2) == 1:
-            draw.line([pt1, pt2], fill=160, width=2)
+            # 提升到纯白 255 并加宽到 4 像素。这确保在 16x16 / 32x32 的小图标尺寸下，波形线依然是一条完整、清晰的高对比度像素实线！
+            draw.line([pt1, pt2], fill=255, width=4)
         
     # 5. 绘制对称的硬朗像素 M 字母主体
     # 我们定义 M 的精确像素顶点，保证完全对称与极佳的视觉平衡
@@ -129,16 +130,16 @@ def main():
     
     offset_dx, offset_dy = 8, 8
     
-    # 在影子上绘制偏移的 M
+    # 在影子上绘制偏移的 M (提升灰度到 145，使抖动出的投影颗粒大而清晰)
     shadow_draw.rectangle([(left_rect[0][0] + offset_dx, left_rect[0][1] + offset_dy),
-                           (left_rect[1][0] + offset_dx, left_rect[1][1] + offset_dy)], fill=110)
+                           (left_rect[1][0] + offset_dx, left_rect[1][1] + offset_dy)], fill=145)
     shadow_draw.rectangle([(right_rect[0][0] + offset_dx, right_rect[0][1] + offset_dy),
-                           (right_rect[1][0] + offset_dx, right_rect[1][1] + offset_dy)], fill=110)
+                           (right_rect[1][0] + offset_dx, right_rect[1][1] + offset_dy)], fill=145)
     offset_v_poly = [(pt[0] + offset_dx, pt[1] + offset_dy) for pt in v_poly]
-    shadow_draw.polygon(offset_v_poly, fill=110)
+    shadow_draw.polygon(offset_v_poly, fill=145)
     
-    # 对影子层进行模糊处理
-    blurred_shadow = shadow_canvas.filter(ImageFilter.GaussianBlur(radius=8))
+    # 对影子层进行模糊处理 (减小模糊半径到 4，收紧阴影边缘，使 Ordered Dithering 产生的渐变颗粒感爆棚！)
+    blurred_shadow = shadow_canvas.filter(ImageFilter.GaussianBlur(radius=4))
     
     # 在主画布上绘制白色 (255) 实体 M 字母
     draw.rectangle(left_rect, fill=255)
