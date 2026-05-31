@@ -10,8 +10,10 @@ MODUS 统一调试工作台。基于 SDL2 + ImGui + ImPlot 开发，集成波形
 
 ## 快速开始 (MSYS2 环境)
 ```bash
+# 编译
 cd mstudio
-make
+
+build.bat USE_ICON=1  # 待图标编译
 ./mstudio.exe
 ```
 
