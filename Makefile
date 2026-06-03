@@ -36,7 +36,7 @@ ALL_SRCS = $(SRCS) $(IMGUI_SRCS) $(IMPLOT_SRCS)
 
 # Object files (Flattened in build directory)
 OBJS = $(addprefix $(BUILD_DIR)/, $(addsuffix .o, $(notdir $(ALL_SRCS))))
-USE_ICON ?= 0
+USE_ICON ?= 1
 ifeq ($(USE_ICON), 1)
     RES_OBJ = $(BUILD_DIR)/mstudio_rc.o
 else

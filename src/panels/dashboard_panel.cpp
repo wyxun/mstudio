@@ -118,13 +118,31 @@ void DashboardPanel::Render() {
     const auto& macros = state.macro_mgr_.GetMacros();
     if (!macros.empty()) {
         ImGui::Separator();
+        ImGuiStyle& style = ImGui::GetStyle();
+        // 获取当前窗口内容区域的最大可视右边界 X 坐标
+        float window_visible_x2 = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+
         for (size_t i = 0; i < macros.size(); ++i) {
             char btn_id[128];
             snprintf(btn_id, sizeof(btn_id), "%s##macro%zu", macros[i].label.c_str(), i);
             if (ImGui::Button(btn_id)) {
                 net.SendToCh0(macros[i].command + "\n");
             }
-            if (i + 1 < macros.size()) ImGui::SameLine();
+
+            // 自动折行逻辑
+            if (i + 1 < macros.size()) {
+                // 获取当前已渲染按钮的右边界 X 坐标
+                float last_button_x2 = ImGui::GetItemRectMax().x;
+                // 预测下一个按钮的宽度（包含 Padding 和文本尺寸）
+                float next_button_width = style.FramePadding.x * 2.0f + ImGui::CalcTextSize(macros[i + 1].label.c_str()).x;
+                // 计算下一个按钮渲染后的预测右边界坐标
+                float next_button_x2 = last_button_x2 + style.ItemSpacing.x + next_button_width;
+
+                // 如果预测右边界未超出当前窗口可视最右端，则并排渲染，否则换行
+                if (next_button_x2 < window_visible_x2) {
+                    ImGui::SameLine();
+                }
+            }
         }
     }
 
