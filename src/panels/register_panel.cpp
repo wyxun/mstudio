@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <exception>
 
+
+
 RegisterPanel::RegisterPanel(SharedState& s) : Panel(s) {
     last_refresh_ = std::chrono::steady_clock::now();
 }
@@ -49,13 +51,6 @@ void RegisterPanel::DrawRegGroup(const char* title,
 }
 
 void RegisterPanel::RefreshRegs() {
-    last_refresh_ = std::chrono::steady_clock::now();
-
-    for (auto& r : regs_) {
-        prev_vals_[r.name] = r.value;
-    }
-
-    regs_ = ocd_.GetRegs();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -184,39 +179,43 @@ void RegisterPanel::Render() {
     bool show_groups = false;
     try {
     // Connection bar
-    if (!ocd_.IsConnected()) {
+    if (!ocd_.IsConnected() && !ocd_.IsConnecting()) {
         if (ImGui::Button("Connect to OpenOCD")) {
-            connected_ = ocd_.Connect();
-            if (connected_) {
-                RefreshRegs();
-            }
+            ocd_.ConnectAsync();
         }
+
         ImGui::SameLine();
         ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "Disconnected");
+    } else if (ocd_.IsConnecting()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "Connecting...");
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) {
+            ocd_.DisconnectAsync();
+        }
     } else {
         ImGui::TextColored(ImVec4(0.3f, 1, 0.3f, 1), "Connected");
 
         ImGui::SameLine();
         if (ImGui::Button("Disconnect")) {
-            ocd_.Disconnect();
+            ocd_.DisconnectAsync();
             connected_ = false;
             regs_.clear();
         }
 
         ImGui::SameLine();
         if (ImGui::Button("Halt & Read")) {
-            ocd_.Halt();
-            RefreshRegs();
+            ocd_.HaltAsync();
+            ocd_.TriggerRefreshRegs();
         }
 
         ImGui::SameLine();
         if (ImGui::Button("Resume")) {
-            ocd_.Resume();
+            ocd_.ResumeAsync();
         }
 
         ImGui::SameLine();
         if (ImGui::Button("Refresh")) {
-            RefreshRegs();
+            ocd_.TriggerRefreshRegs();
         }
 
         // Auto-refresh every 1s when connected
@@ -224,11 +223,21 @@ void RegisterPanel::Render() {
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
                            now - last_refresh_).count();
         if (elapsed > 1000) {
-            RefreshRegs();
+            last_refresh_ = now;
+            ocd_.TriggerRefreshRegs();
         }
     }
 
     ImGui::Separator();
+
+    // Fetch latest regs
+    std::vector<RegEntry> new_regs;
+    if (ocd_.FetchNewRegs(new_regs)) {
+        for (auto& r : regs_) {
+            prev_vals_[r.name] = r.value;
+        }
+        regs_ = std::move(new_regs);
+    }
 
     if (regs_.empty()) {
         ImGui::TextUnformatted("No register data. Connect to OpenOCD and refresh.");

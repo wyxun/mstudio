@@ -6,6 +6,30 @@
 #include <sstream>
 #include <iomanip>
 #include <algorithm>
+#ifdef _WIN32
+#include <windows.h>
+static void KillProcessSilently(const char* process_name) {
+    char cmd[256];
+    snprintf(cmd, sizeof(cmd), "cmd.exe /c taskkill /F /IM %s >nul 2>&1", process_name);
+    STARTUPINFOA si = { sizeof(si) };
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    PROCESS_INFORMATION pi = {};
+    BOOL success = CreateProcessA(NULL, cmd, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
+    if (success) {
+        WaitForSingleObject(pi.hProcess, 1000);
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+    }
+}
+#else
+#include <cstdlib>
+static void KillProcessSilently(const char* process_name) {
+    char cmd[256];
+    snprintf(cmd, sizeof(cmd), "killall -9 %s >/dev/null 2>&1", process_name);
+    std::system(cmd);
+}
+#endif
 
 void DashboardPanel::Render() {
     auto& state = state_;
@@ -19,6 +43,13 @@ void DashboardPanel::Render() {
     ImGui::TextColored(net.IsCh1Connected() ? ImVec4(0,1,0,1) : ImVec4(1,0,0,1), "[Ch1 Wave: %s]", net.IsCh1Connected() ? "ON" : "OFF");
     ImGui::SameLine();
     ImGui::Text("| Sample Rate: %.1f Hz", 1.0 / state.smoothed_period_);
+    ImGui::SameLine();
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.7f, 0.1f, 0.1f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.2f, 0.2f, 1.0f));
+    if (ImGui::Button("Kill OpenOCD")) {
+        KillProcessSilently("openocd.exe");
+    }
+    ImGui::PopStyleColor(2);
 
     ImGui::Separator();
 

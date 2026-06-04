@@ -3,15 +3,18 @@
 #include "network_mgr.h"
 #include "imgui.h"
 #include <cstring>
-
 void TerminalPanel::Render() {
     auto& state = state_;
-    ImGui::Begin("Shell Terminal");
+    ImGui::Begin("Shell Terminal", nullptr, ImGuiWindowFlags_NoScrollbar);
 
     ImGui::Checkbox("Auto-scroll", &state.auto_scroll_);
     ImGui::SameLine();
     if (ImGui::Button("Clear")) {
         state.term_log_.clear();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Copy")) {
+        ImGui::SetClipboardText(state.term_log_.c_str());
     }
 
     ImGui::Separator();
@@ -35,6 +38,13 @@ void TerminalPanel::Render() {
         }
     } else {
         ImGui::TextUnformatted(state.term_log_.c_str());
+    }
+
+    if (ImGui::BeginPopupContextWindow()) {
+        if (ImGui::MenuItem("Copy All")) {
+            ImGui::SetClipboardText(state.term_log_.c_str());
+        }
+        ImGui::EndPopup();
     }
 
     if (state.auto_scroll_ && ImGui::GetScrollY() >= ImGui::GetScrollMaxY())

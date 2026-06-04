@@ -20,9 +20,29 @@ static void EnsureWSA() {
 static void EnsureWSA() {}
 #endif
 
-bool OcdClient::Connect(const char* host, int port) {
+OcdClient::OcdClient() {
+    worker_thread_ = std::thread(&OcdClient::WorkerLoop, this);
+}
+
+OcdClient::~OcdClient() {
+    running_ = false;
+    {
+        std::lock_guard<std::mutex> lock(queue_mutex_);
+    }
+    queue_cv_.notify_all();
+    
+    // 主线程关闭套接字强制唤醒可能处于阻塞状态的后台 select/recv
+    DisconnectInternal();
+    
+    if (worker_thread_.joinable()) {
+        worker_thread_.join();
+    }
+}
+
+
+bool OcdClient::ConnectInternal(const char* host, int port) {
     EnsureWSA();
-    Disconnect();
+    DisconnectInternal();
 
     sock_ = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (sock_ == INVALID_SOCKET) return false;
@@ -90,7 +110,7 @@ bool OcdClient::Connect(const char* host, int port) {
     return true;
 }
 
-void OcdClient::Disconnect() {
+void OcdClient::DisconnectInternal() {
     if (sock_ != INVALID_SOCKET) {
         closesocket(sock_);
         sock_ = INVALID_SOCKET;
@@ -148,7 +168,7 @@ std::string OcdClient::SendCommand(const std::string& cmd) {
     std::string line = cmd + "\r\n";
     int sent = send(sock_, line.c_str(), (int)line.size(), 0);
     if (sent < 0) {
-        Disconnect();
+        DisconnectInternal();
         return "";
     }
 
@@ -169,22 +189,17 @@ void OcdClient::DrainPending() {
     }
 }
 
-bool OcdClient::Halt() {
+bool OcdClient::HaltInternal() {
     auto r = SendCommand("halt");
     return !r.empty() && r.find("timed out") == std::string::npos;
 }
 
-bool OcdClient::Resume() {
+bool OcdClient::ResumeInternal() {
     auto r = SendCommand("resume");
     return !r.empty();
 }
 
-bool OcdClient::ResetHalt() {
-    auto r = SendCommand("reset halt");
-    return !r.empty();
-}
-
-std::vector<RegEntry> OcdClient::GetRegs() {
+std::vector<RegEntry> OcdClient::GetRegsInternal() {
     std::vector<RegEntry> regs;
     auto response = SendCommand("reg");
     if (response.empty()) return regs;
@@ -227,7 +242,7 @@ std::vector<RegEntry> OcdClient::GetRegs() {
     return regs;
 }
 
-uint32_t OcdClient::ReadMem32(uint32_t addr) {
+uint32_t OcdClient::ReadMem32Internal(uint32_t addr) {
     char buf[32];
     snprintf(buf, sizeof(buf), "mrw 0x%08X", addr);
     auto response = SendCommand(buf);
@@ -241,25 +256,100 @@ uint32_t OcdClient::ReadMem32(uint32_t addr) {
     return 0;
 }
 
-std::vector<uint32_t> OcdClient::ReadMemBlock32(uint32_t addr, int count) {
-    std::vector<uint32_t> result;
-    char buf[64];
-    snprintf(buf, sizeof(buf), "mdw 0x%08X %d", addr, count);
-    auto response = SendCommand(buf);
+void OcdClient::PushTask(std::function<void()> task) {
+    {
+        std::lock_guard<std::mutex> lock(queue_mutex_);
+        task_queue_.push(task);
+    }
+    queue_cv_.notify_one();
+}
 
-    std::istringstream ss(response);
-    std::string line;
-    while (std::getline(ss, line)) {
-        auto colon = line.find(':');
-        if (colon == std::string::npos) continue;
-
-        std::istringstream vs(line.substr(colon + 1));
-        std::string word;
-        while (vs >> word) {
-            // mdw outputs plain hex without 0x prefix
-            try { result.push_back(std::stoul(word, nullptr, 16)); }
-            catch (...) {}
+void OcdClient::WorkerLoop() {
+    while (running_) {
+        std::function<void()> task;
+        {
+            std::unique_lock<std::mutex> lock(queue_mutex_);
+            queue_cv_.wait(lock, [this]() { return !task_queue_.empty() || !running_; });
+            if (!running_) break;
+            task = std::move(task_queue_.front());
+            task_queue_.pop();
+        }
+        if (task) {
+            task();
         }
     }
-    return result;
 }
+
+void OcdClient::ConnectAsync(const std::string& host, int port) {
+    if (state_ != State::Disconnected) return;
+    state_ = State::Connecting;
+    host_ = host;
+    port_ = port;
+    PushTask([this]() {
+        bool ok = ConnectInternal(host_.c_str(), port_);
+        state_ = ok ? State::Connected : State::Disconnected;
+    });
+}
+
+void OcdClient::DisconnectAsync() {
+    PushTask([this]() {
+        DisconnectInternal();
+        state_ = State::Disconnected;
+    });
+}
+
+bool OcdClient::IsConnected() {
+    return state_ == State::Connected;
+}
+
+bool OcdClient::IsConnecting() {
+    return state_ == State::Connecting;
+}
+
+void OcdClient::HaltAsync() {
+    PushTask([this]() {
+        HaltInternal();
+    });
+}
+
+void OcdClient::ResumeAsync() {
+    PushTask([this]() {
+        ResumeInternal();
+    });
+}
+
+void OcdClient::TriggerRefreshRegs() {
+    PushTask([this]() {
+        auto regs = GetRegsInternal();
+        std::lock_guard<std::mutex> lock(regs_mutex_);
+        cached_regs_ = std::move(regs);
+        regs_dirty_ = true;
+    });
+}
+
+void OcdClient::TriggerReadMem32(uint32_t addr) {
+    PushTask([this, addr]() {
+        uint32_t val = ReadMem32Internal(addr);
+        std::lock_guard<std::mutex> lock(mem_mutex_);
+        cached_mem_[addr] = val;
+    });
+}
+
+bool OcdClient::FetchNewRegs(std::vector<RegEntry>& out_regs) {
+    std::lock_guard<std::mutex> lock(regs_mutex_);
+    if (!regs_dirty_) return false;
+    out_regs = cached_regs_;
+    regs_dirty_ = false;
+    return true;
+}
+
+bool OcdClient::GetCachedMemValue(uint32_t addr, uint32_t& out_val) {
+    std::lock_guard<std::mutex> lock(mem_mutex_);
+    auto it = cached_mem_.find(addr);
+    if (it == cached_mem_.end()) return false;
+    out_val = it->second;
+    return true;
+}
+
+
+

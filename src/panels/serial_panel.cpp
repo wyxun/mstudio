@@ -513,7 +513,7 @@ void SerialPanel::Render() {
     // First, process any incoming physical serial buffers
     ProcessRxData();
 
-    ImGui::Begin("Serial Console");
+    ImGui::Begin("Serial Console", nullptr, ImGuiWindowFlags_NoScrollbar);
 
     // ==========================================
     // TOP BAR: Connection parameters
@@ -623,6 +623,10 @@ void SerialPanel::Render() {
         rx_display_text_.clear();
     }
     ImGui::SameLine();
+    if (ImGui::Button("Copy RX")) {
+        ImGui::SetClipboardText(rx_display_text_.c_str());
+    }
+    ImGui::SameLine();
     if (ImGui::Button("Reset Counter")) {
         rx_count_ = 0;
         tx_count_ = 0;
@@ -649,6 +653,13 @@ void SerialPanel::Render() {
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.2f, 0.9f, 0.3f, 1.0f)); // Vintage terminal green tint
     ImGui::TextUnformatted(rx_display_text_.c_str());
     ImGui::PopStyleColor();
+
+    if (ImGui::BeginPopupContextWindow()) {
+        if (ImGui::MenuItem("Copy All")) {
+            ImGui::SetClipboardText(rx_display_text_.c_str());
+        }
+        ImGui::EndPopup();
+    }
 
     if (auto_scroll_ && ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) {
         ImGui::SetScrollHereY(1.0f);

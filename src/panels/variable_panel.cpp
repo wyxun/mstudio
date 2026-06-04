@@ -31,20 +31,15 @@ void VariablePanel::LoadElf() {
 }
 
 uint32_t VariablePanel::ReadVarValue(uint32_t addr, uint32_t size) {
-    uint32_t val = ocd_.ReadMem32(addr);
-    if (size < 4) {
-        uint32_t mask = (size == 1) ? 0xFFu : 0xFFFFu;
-        val &= mask;
-    }
-    values_[addr] = val;
-    return val;
+    ocd_.TriggerReadMem32(addr);
+    return 0;
 }
 
 void VariablePanel::RefreshValues() {
     last_refresh_ = std::chrono::steady_clock::now();
     for (auto* v : vars_) {
         if (favorites_.count(v->name)) {
-            ReadVarValue(v->address, v->size);
+            ocd_.TriggerReadMem32(v->address);
         }
     }
 }
@@ -59,6 +54,20 @@ void VariablePanel::ToggleFavorite(const std::string& name) {
 }
 
 void VariablePanel::Render() {
+    ocd_connected_ = ocd_.IsConnected();
+    if (ocd_connected_) {
+        for (auto* v : vars_) {
+            uint32_t val = 0;
+            if (ocd_.GetCachedMemValue(v->address, val)) {
+                if (v->size < 4) {
+                    uint32_t mask = (v->size == 1) ? 0xFFu : 0xFFFFu;
+                    val &= mask;
+                }
+                values_[v->address] = val;
+            }
+        }
+    }
+
     ImGui::Begin(Name());
 
     bool show_table = false;
@@ -84,7 +93,7 @@ void VariablePanel::Render() {
     ImGui::SameLine();
     if (!ocd_connected_) {
         if (ImGui::Button("Connect OCD")) {
-            ocd_connected_ = ocd_.Connect();
+            ocd_.ConnectAsync();
         }
         ImGui::SameLine();
         ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "OCD off");
@@ -92,7 +101,7 @@ void VariablePanel::Render() {
         ImGui::TextColored(ImVec4(0.3f, 1, 0.3f, 1), "OCD on");
         ImGui::SameLine();
         if (ImGui::Button("Disconnect")) {
-            ocd_.Disconnect();
+            ocd_.DisconnectAsync();
             ocd_connected_ = false;
         }
         ImGui::SameLine();
