@@ -63,9 +63,23 @@ bool ProtocolParser::Feed(const std::vector<uint8_t>& data, std::vector<DataSamp
 
                     channels_.push_back(desc);
                 }
+                /* The firmware derives the data-frame mask length from the
+                 * registered channel count. Learn it from the descriptor
+                 * instead of the compile-time constructor value, otherwise
+                 * every data frame is misframed when they differ. */
+                mask_bytes_ = (ch_count + 7) / 8;
+                if (mask_bytes_ < 1) {
+                    mask_bytes_ = 1;
+                }
                 desc_updated = true;
+                buffer_.erase(buffer_.begin(), buffer_.begin() + frame_len);
+            } else {
+                /* CRC mismatch: this is not a valid descriptor. It may be a
+                 * data frame whose seq byte happens to be 0xFD, or stream
+                 * corruption. Resync one byte at a time instead of erasing
+                 * a whole descriptor length (which eats following frames). */
+                buffer_.erase(buffer_.begin());
             }
-            buffer_.erase(buffer_.begin(), buffer_.begin() + frame_len);
         } else {
             // Data frame
             uint8_t seq = frame_type; // the third byte is seq logically for data frames
