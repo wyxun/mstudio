@@ -1,5 +1,24 @@
 # Version Info
 
+## V0.5.0.4
+- **Release Date:** 2026-07-25
+- **Updates:**
+  - **动态追踪与高精细节分析**：重构波形渲染逻辑，Roll/Run 模式下支持 60FPS 无卡顿平滑实时追踪最新数据（Id/Iq/速度/角度）；鼠标拖拽或点击 Pause 可无缝定格并进入 Free 模式，最小支持 **1ms** 级别采样点微观分析。
+  - **单轴/双轴独立放缩与交互优化**：
+    - 兼容按住 Shift 键时系统将滚轮重定向为 `MouseWheelH` 的问题，支持独占 X 轴与 Y 轴缩放。
+    - Dashboard 新增 **Fit Y** 按钮，支持一键将 Y 轴幅度自适应至波形峰峰值。
+  - **数据层与架构稳定性提升**：
+    - 新增断线重连清空积压缓冲、僵尸 Channel 自动擦除。
+    - 引入可变权重 EMA 采样率估算器与 Resume Warmup 保护，解决暂停恢复后采样率估算需要十几秒收敛的滞后问题。
+    - 在 `PlotLineG` 闭包中加入安全边界保护，重构 ImPlot Setup 调用规范，消除 API 阶段锁定断言。
+    - Makefile 增加头文件依赖规则，保证内存结构体定义更新时全量编译同步。
+  - **OcdClient 同步 API 导出**：为 `OcdClient` 新增 `ConnectSync` / `SendCommandSync` / `GetRegsSync` / `ReadMem32Sync` / `ReadMemBlock32Sync` 同步接口，aitrace CLI 不再依赖异步任务队列，驱动方式更符合命令行一次性调用模式。
+  - **aitrace shell 命令重构**：
+    - 新增 `--raw` flag 控制是否过滤固件 `[T]` 级日志行，默认过滤心跳/TRACE 噪声。
+    - 发送命令前 400ms RTT 积压排泄窗口，避免陈旧 prompt 残留导致提前终止。
+    - 双超时终止策略：提示符 `\n> ` 快速返回 + 600ms 空闲超时 + 5s 硬上限。
+  - **aitrace wave stat 链路质量统计**：新增 `wave stat [seconds]` 子命令，每秒一行实时输出 `rate (f/s) / crc_err / seq_lost`，含 2s 静默预热解析至首个描述帧以学习掩码长度，并修复序号 0xFD 保留值引起的隔帧判定失误。
+
 ## V0.5.0.3
 - **Release Date:** 2026-07-25
 - **Updates:**

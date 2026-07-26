@@ -1,5 +1,6 @@
 #include "shell_cmd.h"
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <cstring>
 #include <chrono>
@@ -68,17 +69,47 @@ static SOCKET ConnectTCP(const char* host, int port) {
     return s;
 }
 
-int shell_main(int argc, char* argv[]) {
-    if (argc < 2) {
-        std::cerr << "Usage: aitrace shell <cmd...>\n";
-        return 1;
-    }
+/* Firmware log flooding (e.g. periodic "[T] [Heartbeat] ..." lines) mixes
+ * with shell responses on RTT Ch0. Two defences:
+ *  - stop as soon as the mshell prompt "> " shows up after the response,
+ *    with a hard cap so log spam can never keep the command alive forever;
+ *  - by default drop trace-level "[T] " lines (log noise). Command
+ *    responses are emitted at [I]/[W]/[E] level and are kept.
+ * --raw disables filtering and prints the stream verbatim. */
+static bool IsTraceLogLine(const std::string& line) {
+    return line.rfind("[T] ", 0) == 0;
+}
 
-    // Reconstruct command string from args
+static void PrintFiltered(const std::string& acc, bool raw) {
+    if (raw) {
+        std::cout << acc;
+        return;
+    }
+    std::istringstream ss(acc);
+    std::string line;
+    while (std::getline(ss, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (IsTraceLogLine(line)) continue;
+        /* bare prompt line: marks completion, not part of the response */
+        if (line == "> ") continue;
+        std::cout << line << "\n";
+    }
+}
+
+int shell_main(int argc, char* argv[]) {
+    bool raw = false;
     std::string cmd;
     for (int i = 1; i < argc; i++) {
-        if (i > 1) cmd += " ";
-        cmd += argv[i];
+        std::string a = argv[i];
+        if (a == "--raw") { raw = true; continue; }
+        if (!cmd.empty()) cmd += " ";
+        cmd += a;
+    }
+
+    if (cmd.empty()) {
+        std::cerr << "Usage: aitrace shell [--raw] <cmd...>\n"
+                  << "  --raw   do not filter firmware log lines ([T] ...)\n";
+        return 1;
     }
     cmd += "\r\n";
 
@@ -88,33 +119,51 @@ int shell_main(int argc, char* argv[]) {
         return 1;
     }
 
+    /* Drain the RTT backlog (boot banner, buffered log spam) before sending,
+     * otherwise a stale prompt in the backlog terminates the wait early. */
+    {
+        char drain_buf[4096];
+        auto drain_end = std::chrono::steady_clock::now()
+                       + std::chrono::milliseconds(400);
+        while (std::chrono::steady_clock::now() < drain_end) {
+            fd_set rset;
+            FD_ZERO(&rset); FD_SET(s, &rset);
+            timeval tv = {0, 50000};
+            if (select((int)(s + 1), &rset, nullptr, nullptr, &tv) > 0 &&
+                FD_ISSET(s, &rset)) {
+                if (recv(s, drain_buf, sizeof(drain_buf), 0) <= 0) break;
+            }
+        }
+    }
+
     if (send(s, cmd.c_str(), (int)cmd.size(), 0) < 0) {
         std::cerr << "Failed to send command.\n";
         closesocket(s);
         return 1;
     }
 
-    // Poll for response like network_mgr does: continuous select + recv
-    // with 50ms idle timeout between data chunks
-    auto deadline = std::chrono::steady_clock::now()
-                  + std::chrono::milliseconds(5000);
+    std::string acc;
     bool got_data = false;
     char buf[4096];
+    auto hard_deadline = std::chrono::steady_clock::now()
+                       + std::chrono::milliseconds(5000);
+    auto idle_deadline = hard_deadline;
 
-    while (std::chrono::steady_clock::now() < deadline) {
+    while (std::chrono::steady_clock::now() < hard_deadline) {
         fd_set rset;
         FD_ZERO(&rset); FD_SET(s, &rset);
         timeval tv = {0, 50000}; // 50ms poll
         int ret = select((int)(s + 1), &rset, nullptr, nullptr, &tv);
         if (ret > 0 && FD_ISSET(s, &rset)) {
-            int n = recv(s, buf, sizeof(buf) - 1, 0);
+            int n = recv(s, buf, sizeof(buf), 0);
             if (n > 0) {
-                buf[n] = 0;
-                std::cout << buf;
+                acc.append(buf, (size_t)n);
                 got_data = true;
-                // Reset deadline after receiving data — wait up to 500ms more
-                deadline = std::chrono::steady_clock::now()
-                         + std::chrono::milliseconds(500);
+                /* 600ms idle after the last chunk ends the command */
+                idle_deadline = std::chrono::steady_clock::now()
+                              + std::chrono::milliseconds(600);
+                /* mshell reprints the prompt "> " after each response */
+                if (acc.find("\n> ") != std::string::npos) break;
             } else if (n == 0 || (n < 0
 #ifdef _WIN32
                 && WSAGetLastError() != WSAEWOULDBLOCK
@@ -125,10 +174,14 @@ int shell_main(int argc, char* argv[]) {
                 break; // Connection closed or error
             }
         }
-        if (got_data && std::chrono::steady_clock::now() > deadline) break;
+        if (got_data && std::chrono::steady_clock::now() > idle_deadline) break;
     }
 
-    if (!got_data) std::cout << "(no response from firmware)\n";
+    if (!got_data) {
+        std::cout << "(no response from firmware)\n";
+    } else {
+        PrintFiltered(acc, raw);
+    }
     closesocket(s);
     return 0;
 }

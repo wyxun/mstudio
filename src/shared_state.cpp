@@ -4,6 +4,8 @@
 #include <fstream>
 #include <sstream>
 #include <iostream>
+#include <set>
+#include <algorithm>
 #ifdef _WIN32
 #include <windows.h>
 #include <commdlg.h>
@@ -11,6 +13,19 @@
 
 void SharedState::FetchNetworkData() {
     auto& net = NetworkMgr::GetInstance();
+
+    // === [2a] 检测 Ch1 断→连跳变，清空历史数据，避免积压数据涌入 ===
+    bool currently_connected = net.IsCh1Connected();
+    if (currently_connected && !was_ch1_connected_) {
+        for (auto& kv : ch_buffers_) kv.second.Erase();
+        ch_buffers_.clear();
+        ch_visibility_.clear();
+        virtual_clock_         = 0.0;
+        last_window_time_      = 0.0;
+        estimator_initialized_ = false;
+        ema_warmup_count_      = 0;
+    }
+    was_ch1_connected_ = currently_connected;
 
     // Fetch Ch0 Log lines
     std::string ch0_str;
@@ -27,30 +42,54 @@ void SharedState::FetchNetworkData() {
         std::vector<DataSample> samples;
         bool desc_changed = parser_.Feed(ch1_bytes, samples);
 
+        // === [2b] desc 变更时，删除不在新列表中的僵尸 channel ===
         if (desc_changed) {
-            // New channels map received, could reset buffer or handle dynamically
+            const auto& new_channels = parser_.GetChannels();
+            std::set<int> valid_indices;
+            for (int i = 0; i < (int)new_channels.size(); i++)
+                valid_indices.insert(i);
+            for (auto it = ch_buffers_.begin(); it != ch_buffers_.end(); ) {
+                if (!valid_indices.count(it->first)) {
+                    ch_visibility_.erase(it->first);
+                    it = ch_buffers_.erase(it);
+                } else {
+                    ++it;
+                }
+            }
         }
 
         if (!paused_) {
             double now = ImGui::GetTime();
             time_last_ = now;
 
-            if (last_window_time_ == 0.0) {
-                last_window_time_ = now;
-                virtual_clock_ = now;
+            // === [2c] 初始化（替代 last_window_time_==0.0 的隐式判断）===
+            if (!estimator_initialized_) {
+                last_window_time_      = now;
+                virtual_clock_         = now;
+                estimator_initialized_ = true;
             }
 
-            // Adaptive period estimation (every 500ms)
+            // === [2c] 可变权重 EMA + resume 保护 ===
             points_in_window_ += (int)samples.size();
-            if (now - last_window_time_ > 0.5) {
-                if (points_in_window_ > 0) {
-                    double estimated = (now - last_window_time_) / points_in_window_;
-                    if (estimated > 10.0) estimated = 10.0;
-                    if (estimated < 0.000001) estimated = 0.000001;
 
-                    if (smoothed_period_ == 0.001) smoothed_period_ = estimated;
-                    else smoothed_period_ = smoothed_period_ * 0.9 + estimated * 0.1;
-                }
+            if (resume_first_estimate_) {
+                // resume 后首个估算窗口：重置起始时间，跳过本轮，避免暂停时长污染 period
+                last_window_time_      = now;
+                points_in_window_      = 0;
+                resume_first_estimate_ = false;
+            } else if (now - last_window_time_ > 0.5 && points_in_window_ > 0) {
+                double estimated = (now - last_window_time_) / points_in_window_;
+                estimated = std::max(0.000001, std::min(10.0, estimated));
+
+                // 前 3 次估算采用激进权重，快速收敛到真实采样率
+                float alpha = (ema_warmup_count_ == 0) ? 1.0f
+                            : (ema_warmup_count_ == 1) ? 0.5f
+                            : (ema_warmup_count_ == 2) ? 0.2f
+                            :                            0.1f;
+                smoothed_period_ = smoothed_period_ * (1.0 - (double)alpha)
+                                 + estimated        * (double)alpha;
+                if (ema_warmup_count_ < 3) ema_warmup_count_++;
+
                 last_window_time_ = now;
                 points_in_window_ = 0;
             }

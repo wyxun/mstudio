@@ -79,6 +79,15 @@ struct SharedState {
     double time_last_ = 0.0;
     float history_window_ = 10.0f;
 
+    // Waveform 交互状态（与 terminal auto_scroll_ 区分）
+    bool   waveform_auto_scroll_     = true;  // true=X轴跟随最新数据, false=用户自由控制
+    bool   request_fit_y_            = false; // 一键自适应 Y 轴量程
+
+    // 显示节流（Roll 模式下限制 X 轴更新频率）
+    double display_x_min_            = 0.0;
+    double display_x_max_            = 10.0;
+    double last_display_update_time_ = 0.0;
+
     // Recording
     bool is_recording_ = false;
     std::ofstream record_file_;
@@ -91,10 +100,18 @@ struct SharedState {
     ImGuiTextFilter term_filter_;
 
     // Adaptive clock
-    double virtual_clock_ = 0.0;
+    double virtual_clock_   = 0.0;
     double smoothed_period_ = 0.001;
     double last_window_time_ = 0.0;
-    int points_in_window_ = 0;
+    int    points_in_window_ = 0;
+
+    // 采样率估算器状态
+    bool estimator_initialized_ = false; // 替代 last_window_time_==0.0 的隐式判断
+    bool resume_first_estimate_ = false; // resume 后跳过首次估算窗口
+    int  ema_warmup_count_      = 0;     // 可变权重 EMA 预热计数
+
+    // 连接状态追踪（检测断→连跳变）
+    bool was_ch1_connected_ = false;
 
     // Real-time measurement
     bool measure_active_ = false;

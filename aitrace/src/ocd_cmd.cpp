@@ -24,10 +24,10 @@ static uint32_t ParseHex(const char* s) {
 }
 
 static void WithHalt(OcdClient& ocd, bool auto_resume, std::function<void()> fn) {
-    ocd.SendCommand("halt");
+    ocd.SendCommandSync("halt");
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     fn();
-    if (auto_resume) ocd.SendCommand("resume");
+    if (auto_resume) ocd.SendCommandSync("resume");
 }
 
 int ocd_main(int argc, char* argv[]) {
@@ -36,24 +36,24 @@ int ocd_main(int argc, char* argv[]) {
     std::string sub = argv[1];
 
     OcdClient ocd;
-    if (!ocd.Connect("127.0.0.1", 4444)) {
+    if (!ocd.ConnectSync("127.0.0.1", 4444)) {
         std::cerr << "Failed to connect to OpenOCD (TCP 4444). Is OpenOCD running?\n";
         return 1;
     }
 
     if (sub == "halt") {
-        auto r = ocd.SendCommand("halt");
+        auto r = ocd.SendCommandSync("halt");
         if (r.empty() || r.find("timed out") != std::string::npos)
             std::cout << "Halt failed.\n";
         else
             std::cout << "CPU halted.\n";
     } else if (sub == "resume") {
-        auto r = ocd.SendCommand("resume");
+        auto r = ocd.SendCommandSync("resume");
         if (r.empty()) std::cout << "Resume failed.\n";
         else std::cout << "CPU resumed.\n";
     } else if (sub == "regs") {
         WithHalt(ocd, true, [&]() {
-            auto regs = ocd.GetRegs();
+            auto regs = ocd.GetRegsSync();
             if (regs.empty()) {
                 std::cout << "(could not read registers)\n";
                 return;
@@ -68,7 +68,7 @@ int ocd_main(int argc, char* argv[]) {
         if (argc < 3) { std::cerr << "Usage: aitrace ocd peek <hex_addr>\n"; return 1; }
         uint32_t addr = ParseHex(argv[2]);
         WithHalt(ocd, true, [&]() {
-            uint32_t val = ocd.ReadMem32(addr);
+            uint32_t val = ocd.ReadMem32Sync(addr);
             std::cout << "0x" << std::hex << std::setw(8) << std::setfill('0')
                       << val << std::dec << std::setfill(' ') << "\n";
         });
@@ -77,7 +77,7 @@ int ocd_main(int argc, char* argv[]) {
         uint32_t addr = ParseHex(argv[2]);
         int count = (argc > 3) ? std::stoi(argv[3]) : 16;
         WithHalt(ocd, true, [&]() {
-            auto vals = ocd.ReadMemBlock32(addr, count);
+            auto vals = ocd.ReadMemBlock32Sync(addr, count);
             for (size_t i = 0; i < vals.size(); i++) {
                 if (i % 4 == 0) {
                     if (i > 0) std::cout << "\n";
@@ -92,7 +92,7 @@ int ocd_main(int argc, char* argv[]) {
     } else if (sub == "stack") {
         int depth = (argc > 2) ? std::stoi(argv[2]) : 32;
         WithHalt(ocd, true, [&]() {
-            auto regs = ocd.GetRegs();
+            auto regs = ocd.GetRegsSync();
             uint32_t sp = 0;
             for (const auto& r : regs) {
                 if (r.name == "sp" || r.name == "msp") { sp = r.value; break; }
@@ -103,7 +103,7 @@ int ocd_main(int argc, char* argv[]) {
             }
             sp &= ~0x3u;
             uint32_t start = sp - 32;
-            auto vals = ocd.ReadMemBlock32(start, depth);
+            auto vals = ocd.ReadMemBlock32Sync(start, depth);
             for (size_t i = 0; i < vals.size(); i++) {
                 uint32_t addr = start + (uint32_t)(i * 4);
                 std::cout << "0x" << std::hex << std::setw(8) << std::setfill('0')
@@ -120,7 +120,7 @@ int ocd_main(int argc, char* argv[]) {
             if (i > 2) full += " ";
             full += argv[i];
         }
-        std::cout << ocd.SendCommand(full) << "\n";
+        std::cout << ocd.SendCommandSync(full) << "\n";
     } else {
         PrintUsage();
         return 1;

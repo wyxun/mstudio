@@ -54,7 +54,32 @@ void DashboardPanel::Render() {
     ImGui::Separator();
 
     // Wave Control
-    if (ImGui::Button(state.paused_ ? "Resume" : "Pause")) state.paused_ = !state.paused_;
+    if (ImGui::Button(state.paused_ ? "Resume" : "Pause")) {
+        if (!state.paused_) {
+            // 即将暂停：无需特殊处理
+        } else {
+            // 即将恢复：标记跳过首次估算，重启 EMA warmup
+            state.resume_first_estimate_ = true;
+            state.ema_warmup_count_      = 0;
+        }
+        state.paused_ = !state.paused_;
+    }
+    ImGui::SameLine();
+
+    // Run 按鈕：仅在 Free 模式（用户已触砂图表脱离自动滚动）时显示
+    if (!state.waveform_auto_scroll_) {
+        ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.1f, 0.5f, 0.15f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.7f, 0.25f, 1.0f));
+        if (ImGui::Button("Run")) {
+            state.waveform_auto_scroll_ = true;
+        }
+        ImGui::PopStyleColor(2);
+        ImGui::SameLine();
+    }
+
+    if (ImGui::Button("Fit Y")) {
+        state.request_fit_y_ = true;
+    }
     ImGui::SameLine();
 
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.4f, 0.1f, 0.1f, 1.0f));
@@ -68,7 +93,9 @@ void DashboardPanel::Render() {
 
     ImGui::SameLine();
     ImGui::SetNextItemWidth(120);
-    ImGui::SliderFloat("Window", &state.history_window_, 0.1f, 60.0f, "%.1fs");
+    if (ImGui::SliderFloat("Window", &state.history_window_, 0.1f, 60.0f, "%.1fs")) {
+        state.display_x_min_ = state.display_x_max_ - state.history_window_;
+    }
 
     ImGui::SameLine();
     ImGui::SetCursorPosX(ImGui::GetWindowWidth() - 120.0f);

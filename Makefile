@@ -68,7 +68,7 @@ $(RES_OBJ): mstudio.rc mstudio.ico
 vpath %.cpp $(SRC_DIR) $(SRC_DIR)/panels $(SRC_DIR)/utils $(THIRD_PARTY_DIR)/imgui $(THIRD_PARTY_DIR)/imgui/backends $(THIRD_PARTY_DIR)/implot
 vpath %.c $(SRC_DIR)/utils
 
-# Build rule for C++ files
+# Build rule for C++ files (depends on header files to ensure clean rebuild on struct changes)
 $(BUILD_DIR)/%.cpp.o: %.cpp
 	@mkdir -p $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@

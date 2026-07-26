@@ -351,5 +351,31 @@ bool OcdClient::GetCachedMemValue(uint32_t addr, uint32_t& out_val) {
     return true;
 }
 
+bool OcdClient::ConnectSync(const char* host, int port) {
+    return ConnectInternal(host, port);
+}
+
+std::string OcdClient::SendCommandSync(const std::string& cmd) {
+    return SendCommand(cmd);
+}
+
+std::vector<RegEntry> OcdClient::GetRegsSync() {
+    return GetRegsInternal();
+}
+
+uint32_t OcdClient::ReadMem32Sync(uint32_t addr) {
+    return ReadMem32Internal(addr);
+}
+
+std::vector<uint32_t> OcdClient::ReadMemBlock32Sync(uint32_t addr, int count) {
+    std::vector<uint32_t> vals;
+    if (count <= 0) return vals;
+    vals.reserve((size_t)count);
+    for (int i = 0; i < count; i++) {
+        vals.push_back(ReadMem32Internal(addr + (uint32_t)(i * 4)));
+    }
+    return vals;
+}
+
 
 

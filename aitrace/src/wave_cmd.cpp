@@ -88,7 +88,8 @@ static void PrintUsage() {
               << "  stop                    Stop acquisition\n"
               << "  rate <n>                Set decimation rate\n"
               << "  capture <seconds>       Capture CSV to stdout\n"
-              << "  capture <s> --output <f> Capture CSV to file\n";
+              << "  capture <s> --output <f> Capture CSV to file\n"
+              << "  stat [seconds]          Link quality: frame rate / crc_err / seq_lost\n";
 }
 
 int wave_main(int argc, char* argv[]) {
@@ -104,6 +105,141 @@ int wave_main(int argc, char* argv[]) {
             cmd += " " + std::string(argv[2]);
         }
         SendShellCmd(cmd);
+        return 0;
+    }
+
+    // stat [seconds] — raw frame accounting: rate / CRC errors / seq gaps.
+    // Cross-check with firmware `wave drop`: produced = ok + seq_lost + drops.
+    if (sub == "stat") {
+        double duration = (argc >= 3) ? std::stod(argv[2]) : 5.0;
+
+        SOCKET s = ConnectTCP("127.0.0.1", 9091);
+        if (s == INVALID_SOCKET) {
+            std::cerr << "Failed to connect to RTT Ch1 (TCP 9091).\n";
+            return 1;
+        }
+
+        std::vector<uint8_t> buf;
+        int mask_bytes = 0;      // learned from descriptor frames
+        int last_seq = -1;
+        size_t n_ok = 0, n_crc = 0, n_gap = 0, n_bytes = 0;
+        size_t tot_ok = 0, tot_crc = 0, tot_gap = 0;
+
+        /* Parse buffered frames; statistics are only accumulated when
+         * 'counting' is true (warmup parses silently to sync up and learn
+         * the descriptor). */
+        auto parse = [&](bool counting) {
+            size_t i = 0;
+            while (true) {
+                while (i + 1 < buf.size() &&
+                       !(buf[i] == 0xAA && buf[i + 1] == 0x55)) i++;
+                if (i + 3 > buf.size()) break;
+                uint8_t third = buf[i + 2];
+                if (third == 0xFD) { // descriptor frame
+                    if (i + 4 > buf.size()) break;
+                    size_t flen = 4 + buf[i + 3] * 12 + 1;
+                    if (i + flen > buf.size()) break;
+                    uint8_t crc = 0xFF;
+                    for (size_t k = i + 2; k < i + flen - 1; k++) crc ^= buf[k];
+                    if (crc == buf[i + flen - 1]) {
+                        mask_bytes = (buf[i + 3] + 7) / 8;
+                        if (mask_bytes < 1) mask_bytes = 1;
+                        i += flen;
+                    } else {
+                        if (counting) n_crc++;
+                        i += 1;
+                    }
+                    continue;
+                }
+                if (mask_bytes == 0) { i++; continue; } // no desc yet
+                // data frame: len = 3 + mask + 2*popcount(mask) + 1
+                if (i + 3 + (size_t)mask_bytes > buf.size()) break;
+                int n_ch = 0;
+                for (int m = 0; m < mask_bytes; m++) {
+                    uint8_t b = buf[i + 3 + m];
+                    for (; b; n_ch++) b &= b - 1;
+                }
+                size_t flen = 3 + mask_bytes + 2 * n_ch + 1;
+                if (i + flen > buf.size()) break;
+                uint8_t crc = 0xFF;
+                for (size_t k = i + 2; k < i + flen - 1; k++) crc ^= buf[k];
+                if (crc == buf[i + flen - 1]) {
+                    if (counting) {
+                        n_ok++;
+                        if (last_seq >= 0) {
+                            int gap = (third - last_seq - 1) & 0xFF;
+                            /* firmware never emits seq 0xFD (reserved) */
+                            if (gap == 1 && ((last_seq + 1) & 0xFF) == 0xFD)
+                                gap = 0;
+                            n_gap += (size_t)gap;
+                        }
+                    }
+                    last_seq = third;
+                    i += flen;
+                } else {
+                    if (counting) n_crc++;
+                    i += 1;
+                }
+            }
+            buf.erase(buf.begin(), buf.begin() + (ptrdiff_t)i);
+        };
+
+        auto recv_chunk = [&](int timeout_ms) {
+            fd_set rset;
+            FD_ZERO(&rset); FD_SET(s, &rset);
+            timeval tv = {timeout_ms / 1000, (timeout_ms % 1000) * 1000};
+            if (select((int)(s + 1), &rset, nullptr, nullptr, &tv) > 0 &&
+                FD_ISSET(s, &rset)) {
+                uint8_t chunk[4096];
+                int n = recv(s, (char*)chunk, sizeof(chunk), 0);
+                if (n <= 0) return false;
+                n_bytes += (size_t)n;
+                buf.insert(buf.end(), chunk, chunk + n);
+            }
+            return true;
+        };
+
+        std::cout << "# stat " << duration << "s  (ok f/s | crc_err | seq_lost)\n";
+        /* Warmup: the RTT up-buffer holds a stale backlog (device keeps
+         * writing while no client is attached). Parse silently until the
+         * first valid descriptor teaches us the mask length (2s cap). */
+        auto warmup_end = std::chrono::steady_clock::now()
+                        + std::chrono::seconds(2);
+        while (mask_bytes == 0 && std::chrono::steady_clock::now() < warmup_end) {
+            if (!recv_chunk(100)) goto done;
+            parse(false);
+        }
+        last_seq = -1;
+        buf.clear();
+
+        {
+            auto t_start = std::chrono::steady_clock::now();
+            auto t_report = t_start;
+            auto deadline = t_start + std::chrono::duration<double>(duration);
+
+            while (std::chrono::steady_clock::now() < deadline) {
+                if (!recv_chunk(100)) goto done;
+                parse(true);
+
+                auto now = std::chrono::steady_clock::now();
+                if (now - t_report >= std::chrono::seconds(1)) {
+                    double dt =
+                        std::chrono::duration<double>(now - t_report).count();
+                    t_report = now;
+                    std::cout << "rate " << (double)n_ok / dt
+                              << " f/s   crc_err " << n_crc
+                              << "   seq_lost " << n_gap << "\n";
+                    tot_ok += n_ok; tot_crc += n_crc; tot_gap += n_gap;
+                    n_ok = n_crc = n_gap = 0;
+                }
+            }
+        }
+
+done:
+        closesocket(s);
+        std::cout << "summary: " << tot_ok << " frames (" 
+                  << (double)n_bytes / 1024.0 << " KB total), crc_err "
+                  << tot_crc << ", seq_lost " << tot_gap << "\n";
         return 0;
     }
 

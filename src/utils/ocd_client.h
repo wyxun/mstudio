@@ -50,6 +50,15 @@ public:
     bool FetchNewRegs(std::vector<RegEntry>& out_regs);
     bool GetCachedMemValue(uint32_t addr, uint32_t& out_val);
 
+    // Synchronous convenience API for CLI tools (aitrace). Drives the
+    // socket directly from the calling thread; do not mix with the async
+    // task-queue API above on the same instance.
+    bool ConnectSync(const char* host, int port);
+    std::string SendCommandSync(const std::string& cmd);
+    std::vector<RegEntry> GetRegsSync();
+    uint32_t ReadMem32Sync(uint32_t addr);
+    std::vector<uint32_t> ReadMemBlock32Sync(uint32_t addr, int count);
+
 private:
     bool ConnectInternal(const char* host, int port);
     void DisconnectInternal();
