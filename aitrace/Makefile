@@ -27,13 +27,13 @@ core:
 	@$(MAKE) -C $(CORE_DIR)
 
 $(TARGET): $(OBJS) $(LIB_CORE)
-	@mkdir -p $(BUILD_DIR)
+	@if not exist $(BUILD_DIR) mkdir $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(OBJS) $(LIB_CORE) -o $@ $(LIBS)
 
 vpath %.cpp $(SRC_DIR)
 
 $(BUILD_DIR)/%.cpp.o: %.cpp
-	@mkdir -p $(BUILD_DIR)
+	@if not exist $(BUILD_DIR) mkdir $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
 clean:

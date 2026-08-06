@@ -1,5 +1,22 @@
 # Version Info
 
+## V0.6.0.0
+- **Release Date:** 2026-08-07
+- **Updates:**
+  - **Waveform V2/V2.1 协议支持**：
+    - 支持 `AA 55 FC` 批量帧、`AA 55 FA` snapshot 帧和 `AA 55 FE` 采样周期元数据。
+    - 支持每通道/每变量独立刷新率，同一流中混合 10 kHz 与 1 kHz 通道。
+    - 支持 MCU 上报采样周期，Dashboard 同时显示 `Actual` 与 `MCU` 采样率。
+  - **波形渲染与交互**：
+    - 修复 X 轴缩放被实时滚动覆盖的问题。
+    - 新增 `TestSin Only` / `Show All` 验证视图，`TestSin Only` 自动切换到 0.1s 窗口。
+    - 密集数据改为逐像素 min/max 包络绘制，避免伪锯齿。
+    - 修复 batch 边界时间戳重叠导致的同一 X 轴双点问题。
+  - **稳定性与构建**：
+    - 修复 MStudio 启动闪退。
+    - Makefile 增加 `-MMD -MP` 头文件依赖追踪。
+    - 更新协议解析器以支持 descriptor/meta/batch/snapshot 帧和 CRC16。
+
 ## V0.5.0.4
 - **Release Date:** 2026-07-25
 - **Updates:**

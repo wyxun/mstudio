@@ -42,7 +42,22 @@ void DashboardPanel::Render() {
     ImGui::SameLine();
     ImGui::TextColored(net.IsCh1Connected() ? ImVec4(0,1,0,1) : ImVec4(1,0,0,1), "[Ch1 Wave: %s]", net.IsCh1Connected() ? "ON" : "OFF");
     ImGui::SameLine();
-    ImGui::Text("| Sample Rate: %.1f Hz", 1.0 / state.smoothed_period_);
+    double reported_rate = state.parser_.GetStreamRateHz();
+    if (reported_rate <= 0.0) reported_rate = 1.0 / state.smoothed_period_;
+    ImGui::Text("| Actual: %.0f Hz | MCU: %.0f Hz",
+                state.actual_sample_rate_hz_,
+                reported_rate);
+    ImGui::SameLine();
+    if (state.last_snapshot_id_ == 0) {
+        ImGui::Text("| Snapshot: idle");
+    } else {
+        ImGui::Text("| Snapshot: %.0f Hz id %u",
+                    state.snapshot_rate_hz_,
+                    state.last_snapshot_id_);
+    }
+    ImGui::SameLine();
+    ImGui::Text("| Gap: %llu",
+                (unsigned long long)state.dropped_samples_);
     ImGui::SameLine();
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.7f, 0.1f, 0.1f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.2f, 0.2f, 1.0f));
@@ -82,6 +97,61 @@ void DashboardPanel::Render() {
     }
     ImGui::SameLine();
 
+    if (ImGui::Button("TestSin Only")) {
+        state.sine_only_mode_ = true;
+        state.waveform_auto_scroll_ = true;
+        state.history_window_ = 0.1f;
+        if (state.time_last_ > 0.0) {
+            state.display_x_max_ = state.time_last_;
+            state.display_x_min_ = state.time_last_ - state.history_window_;
+        }
+        const auto& channels = state.parser_.GetChannels();
+        for (auto& kv : state.ch_visibility_) kv.second = false;
+        for (int i = 0; i < (int)channels.size(); ++i) {
+            if (channels[i].name == "TestSin") {
+                state.ch_visibility_[i] = true;
+            }
+        }
+        state.request_fit_y_ = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Show All")) {
+        state.sine_only_mode_ = false;
+        for (auto& kv : state.ch_visibility_) kv.second = true;
+        state.request_fit_y_ = true;
+    }
+    ImGui::SameLine();
+
+    if (ImGui::Button("Wave Start")) {
+        net.SendToCh0("wave start\n");
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Wave Stop")) {
+        net.SendToCh0("wave stop\n");
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("10 kHz Stream")) {
+        net.SendToCh0("wave stream 10000\n");
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("5 kHz Stream")) {
+        net.SendToCh0("wave stream 5000\n");
+    }
+    ImGui::SameLine();
+
+    if (ImGui::Button("Arm 20 kHz")) {
+        net.SendToCh0("wave period 50000\nwave snap start 32 50000\n");
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Trigger Snapshot")) {
+        net.SendToCh0("wave snap trigger\n");
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Stop Snapshot")) {
+        net.SendToCh0("wave snap stop\n");
+    }
+    ImGui::SameLine();
+
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.4f, 0.1f, 0.1f, 1.0f));
     if (ImGui::Button("Clear")) {
         for (auto& pair : state.ch_buffers_) {
@@ -99,6 +169,9 @@ void DashboardPanel::Render() {
 
     ImGui::SameLine();
     ImGui::SetCursorPosX(ImGui::GetWindowWidth() - 120.0f);
+
+    ImGui::Checkbox("Forward Fill CSV", &state.csv_forward_fill_);
+    ImGui::SameLine();
 
     if (state.is_recording_) {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.1f, 0.1f, 1.0f));
@@ -119,6 +192,7 @@ void DashboardPanel::Render() {
             state.record_file_.open(state.recording_filename_);
             if (state.record_file_.is_open()) {
                 state.is_recording_ = true;
+                state.last_csv_values_.clear();
                 state.record_file_ << "Time";
                 const auto& channels = state.parser_.GetChannels();
                 for (const auto& ch : channels) state.record_file_ << "," << ch.name;

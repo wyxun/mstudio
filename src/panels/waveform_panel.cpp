@@ -5,7 +5,9 @@
 #include "implot.h"
 #include <cstdio>
 #include <cmath>
+#include <cfloat>
 #include <algorithm>
+#include <vector>
 
 // ─── FOC 通道配色（示波器传统色）────────────────────────────────────────
 static const ImVec4 kChannelColors[] = {
@@ -25,6 +27,62 @@ static void DrawDashedH(ImDrawList* dl, float x1, float x2, float y, ImU32 col) 
 static void DrawDashedV(ImDrawList* dl, float x, float y1, float y2, ImU32 col) {
     for (float y = y1; y < y2; y += 10.0f)
         dl->AddLine(ImVec2(x, y), ImVec2(x, std::min(y + 5.0f, y2)), col, 1.0f);
+}
+
+static void PlotMinMaxBars(const char* name, const ScrollingBuffer* buf,
+                           double x_min, double x_max, int plot_w_px,
+                           const ImPlotSpec& spec) {
+    if (buf->XData.empty() || plot_w_px <= 0 || x_max <= x_min) return;
+
+    int bins = std::max(1, plot_w_px);
+    std::vector<double> xs(bins, 0.0);
+    std::vector<double> min_y(bins, DBL_MAX);
+    std::vector<double> max_y(bins, -DBL_MAX);
+    std::vector<bool> filled(bins, false);
+    double span = x_max - x_min;
+
+    int sz = (int)buf->XData.size();
+    for (int i = 0; i < sz; ++i) {
+        int ri = (buf->Offset + i) % sz;
+        double x = buf->XData[ri];
+        if (!std::isfinite(x) || x < x_min || x > x_max) continue;
+        int bin = (int)((x - x_min) / span * bins);
+        if (bin < 0) bin = 0;
+        if (bin >= bins) bin = bins - 1;
+
+        double y = buf->YData[ri];
+        if (!std::isfinite(y)) continue;
+        if (!filled[bin]) {
+            filled[bin] = true;
+            min_y[bin] = max_y[bin] = y;
+            xs[bin] = x;
+        } else {
+            if (y < min_y[bin]) min_y[bin] = y;
+            if (y > max_y[bin]) max_y[bin] = y;
+        }
+    }
+
+    std::vector<double> bar_xs, bar_ys, bar_neg, bar_pos;
+    bar_xs.reserve((size_t)bins);
+    bar_ys.reserve((size_t)bins);
+    bar_neg.reserve((size_t)bins);
+    bar_pos.reserve((size_t)bins);
+    for (int b = 0; b < bins; ++b) {
+        if (!filled[b]) continue;
+        double mid = 0.5 * (min_y[b] + max_y[b]);
+        bar_xs.push_back(xs[b]);
+        bar_ys.push_back(mid);
+        bar_neg.push_back(mid - min_y[b]);
+        bar_pos.push_back(max_y[b] - mid);
+    }
+
+    if (!bar_xs.empty()) {
+        ImPlotSpec bar_spec = spec;
+        bar_spec.Size = 0.0f;
+        ImPlot::PlotErrorBars(name, bar_xs.data(), bar_ys.data(),
+                              bar_neg.data(), bar_pos.data(),
+                              (int)bar_xs.size(), bar_spec);
+    }
 }
 
 // 测量叠加层：实时视图和离线查看器共用
@@ -68,8 +126,8 @@ void WaveformPanel::Render() {
             }
             ImPlot::SetupAxisLimits(ImAxis_X1, state.display_x_min_, state.display_x_max_, ImGuiCond_Always);
         } else {
-            // Free 模式：维持用户当前画面，缩放看细节
-            ImPlot::SetupAxisLimits(ImAxis_X1, state.display_x_min_, state.display_x_max_, ImGuiCond_Always);
+            // Free 模式：只在刚脱离 Roll 时应用一次当前范围，之后交给 ImPlot 缩放/平移
+            ImPlot::SetupAxisLimits(ImAxis_X1, state.display_x_min_, state.display_x_max_, ImGuiCond_Once);
         }
 
         // ── 2. Setup 结束，进行交互检测与模式切换 ─────────────────────────────
@@ -104,6 +162,16 @@ void WaveformPanel::Render() {
             int   ch_idx = pair.first;
             auto& buf    = pair.second;
             if (buf.XData.empty()) continue;
+            if (state.sine_only_mode_) {
+                bool is_test = (ch_idx < (int)channels.size() &&
+                                channels[ch_idx].name == "TestSin");
+                if (!is_test) continue;
+            } else {
+                if (state.ch_visibility_.count(ch_idx) &&
+                    !state.ch_visibility_[ch_idx]) {
+                    continue;
+                }
+            }
 
             std::string name = (ch_idx < (int)channels.size())
                 ? channels[ch_idx].name
@@ -117,23 +185,31 @@ void WaveformPanel::Render() {
             spec.LineWeight = 2.0f;
 
             // 散点切换：pts/pixel < 2 时加圆点标记，每个 1KHz 采样点清晰可见
+            double pts_per_px = 0.0;
             if (state.smoothed_period_ > 1e-9 && plot_w_px > 0) {
                 double pts_in_view = view_width / state.smoothed_period_;
-                if (pts_in_view / plot_w_px < 2.0) {
+                pts_per_px = pts_in_view / plot_w_px;
+                if (pts_per_px < 2.0) {
                     spec.Marker          = ImPlotMarker_Circle;
                     spec.MarkerSize      = 3.0f;
                     spec.MarkerFillColor = col;   // ImVec4
                 }
             }
 
-            ImPlot::PlotLineG(name.c_str(), [](int idx, void* data) {
-                ScrollingBuffer* b = (ScrollingBuffer*)data;
-                if (!b || b->XData.empty()) return ImPlotPoint(0.0, 0.0);
-                int sz = (int)b->XData.size();
-                int ri = (b->Offset + idx) % sz;
-                if (ri < 0 || ri >= sz) return ImPlotPoint(0.0, 0.0);
-                return ImPlotPoint(b->XData[ri], b->YData[ri]);
-            }, &buf, (int)buf.XData.size(), spec);
+            if (pts_per_px > 2.0) {
+                PlotMinMaxBars(name.c_str(), &buf,
+                               plot_limits.X.Min, plot_limits.X.Max,
+                               (int)plot_w_px, spec);
+            } else {
+                ImPlot::PlotLineG(name.c_str(), [](int idx, void* data) {
+                    ScrollingBuffer* b = (ScrollingBuffer*)data;
+                    if (!b || b->XData.empty()) return ImPlotPoint(0.0, 0.0);
+                    int sz = (int)b->XData.size();
+                    int ri = (b->Offset + idx) % sz;
+                    if (ri < 0 || ri >= sz) return ImPlotPoint(0.0, 0.0);
+                    return ImPlotPoint(b->XData[ri], b->YData[ri]);
+                }, &buf, (int)buf.XData.size(), spec);
+            }
         }
 
         // ── 5. 测量叠加层 ────────────────────────────────────────────────
@@ -289,4 +365,3 @@ void WaveformPanel::RenderOfflineViewers() {
         ++it;
     }
 }
-

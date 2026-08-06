@@ -4,7 +4,7 @@
 MSYS64_PATH = D:/software/msys64
 CXX = $(MSYS64_PATH)/mingw64/bin/clang++
 WINDRES = $(MSYS64_PATH)/mingw64/bin/windres
-CFLAGS = -Wall -Wextra -O2 -g
+CFLAGS = -Wall -Wextra -O2 -g -MMD -MP
 CXXFLAGS = -std=c++17 $(CFLAGS)
 
 # Directories
@@ -43,6 +43,8 @@ else
     RES_OBJ =
 endif
 
+-include $(wildcard $(BUILD_DIR)/*.d)
+
 # Libraries
 LIBS = -static -lmingw32 -lSDL2main -lSDL2 -limm32 -lole32 -loleaut32 -luuid -lversion -lwinmm -lsetupapi -lshell32 -ldinput8 -lgdi32 -ladvapi32 -lws2_32 -lopengl32 -lcomdlg32 -mwindows
 
@@ -51,17 +53,24 @@ TARGET = mstudio.exe
 
 all: check_deps $(TARGET)
 
+test: $(BUILD_DIR)/protocol_parser_test.exe
+	$(BUILD_DIR)/protocol_parser_test.exe
+
+$(BUILD_DIR)/protocol_parser_test.exe: tests/protocol_parser_test.cpp src/protocol_parser.cpp
+	@if not exist $(BUILD_DIR) mkdir $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) $^ -o $@
+
 check_deps:
-	@if [ ! -f $(THIRD_PARTY_DIR)/imgui/imgui.cpp ]; then echo "[ERROR] ImGui submodule missing. Please run 'git submodule update --init' or manually download to thirdparty/imgui"; exit 1; fi
-	@if [ ! -f $(THIRD_PARTY_DIR)/implot/implot.cpp ]; then echo "[ERROR] ImPlot submodule missing. Please run 'git submodule update --init' or manually download to thirdparty/implot"; exit 1; fi
+	@if not exist $(THIRD_PARTY_DIR)/imgui/imgui.cpp exit /b 1
+	@if not exist $(THIRD_PARTY_DIR)/implot/implot.cpp exit /b 1
 
 $(TARGET): $(OBJS) $(RES_OBJ)
-	@mkdir -p $(BUILD_DIR)
+	@if not exist $(BUILD_DIR) mkdir $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(OBJS) $(RES_OBJ) -o $@ $(LIBS)
 
 # Build rule for Windows resource file
 $(RES_OBJ): mstudio.rc mstudio.ico
-	@mkdir -p $(BUILD_DIR)
+	@if not exist $(BUILD_DIR) mkdir $(BUILD_DIR)
 	$(WINDRES) -i $< -o $@
 
 # VPATH tells make where to look for source files
@@ -70,12 +79,12 @@ vpath %.c $(SRC_DIR)/utils
 
 # Build rule for C++ files (depends on header files to ensure clean rebuild on struct changes)
 $(BUILD_DIR)/%.cpp.o: %.cpp
-	@mkdir -p $(BUILD_DIR)
+	@if not exist $(BUILD_DIR) mkdir $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
 # Build rule for C files
 $(BUILD_DIR)/%.c.o: %.c
-	@mkdir -p $(BUILD_DIR)
+	@if not exist $(BUILD_DIR) mkdir $(BUILD_DIR)
 	$(MSYS64_PATH)/mingw64/bin/clang $(CFLAGS) $(INCLUDES) -c $< -o $@
 
 clean:

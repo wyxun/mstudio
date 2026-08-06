@@ -58,7 +58,7 @@ aitrace shell log -E -W -I -D         # 切换日志级别
 aitrace shell ver                     # 查看 MODUS 版本
 ```
 
-行为说明（V0.5.0.4 重构）：
+行为说明（V0.6.0.0 重构）：
 
 - **日志过滤**：固件的 TRACE 级日志（如周期心跳 `[T] [Heartbeat] ...`）默认被
   过滤，只保留命令响应（`[I]/[W]/[E]` 级）。`--raw` 关闭过滤，输出原始字节流。

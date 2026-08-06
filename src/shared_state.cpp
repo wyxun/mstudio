@@ -6,6 +6,7 @@
 #include <iostream>
 #include <set>
 #include <algorithm>
+#include <cmath>
 #ifdef _WIN32
 #include <windows.h>
 #include <commdlg.h>
@@ -24,6 +25,10 @@ void SharedState::FetchNetworkData() {
         last_window_time_      = 0.0;
         estimator_initialized_ = false;
         ema_warmup_count_      = 0;
+        actual_sample_rate_hz_ = 0.0;
+        actual_window_samples_ = 0;
+        actual_window_start_   = 0.0;
+        exact_clock_started_   = false;
     }
     was_ch1_connected_ = currently_connected;
 
@@ -58,6 +63,20 @@ void SharedState::FetchNetworkData() {
             }
         }
 
+        double reported_period = parser_.GetStreamPeriodSeconds();
+        if (reported_period > 0.0) {
+            smoothed_period_ = reported_period;
+        }
+        uint32_t snapshot_id = parser_.GetLastSnapshotId();
+        if (snapshot_id != 0) {
+            last_snapshot_id_ = snapshot_id;
+        }
+        double snapshot_period = parser_.GetSnapshotPeriodSeconds();
+        if (snapshot_period > 0.0) {
+            snapshot_rate_hz_ = 1.0 / snapshot_period;
+        }
+        dropped_samples_ = parser_.GetDroppedSamples();
+
         if (!paused_) {
             double now = ImGui::GetTime();
             time_last_ = now;
@@ -67,10 +86,28 @@ void SharedState::FetchNetworkData() {
                 last_window_time_      = now;
                 virtual_clock_         = now;
                 estimator_initialized_ = true;
+                actual_window_start_   = now;
+                actual_window_samples_ = 0;
+            }
+
+            for (const auto& s : samples) {
+                if (!s.gap_marker && !s.is_snapshot) {
+                    actual_window_samples_++;
+                }
+            }
+            if (now - actual_window_start_ >= 1.0) {
+                double elapsed = now - actual_window_start_;
+                actual_sample_rate_hz_ = actual_window_samples_ / elapsed;
+                actual_window_start_   = now;
+                actual_window_samples_ = 0;
             }
 
             // === [2c] 可变权重 EMA + resume 保护 ===
-            points_in_window_ += (int)samples.size();
+            int arrival_count = 0;
+            for (const auto& s : samples) {
+                if (!s.has_exact_timestamp) arrival_count++;
+            }
+            points_in_window_ += arrival_count;
 
             if (resume_first_estimate_) {
                 // resume 后首个估算窗口：重置起始时间，跳过本轮，避免暂停时长污染 period
@@ -94,11 +131,64 @@ void SharedState::FetchNetworkData() {
                 points_in_window_ = 0;
             }
 
-            for (const auto& s : samples) {
-                virtual_clock_ += smoothed_period_;
+            double exact_batch_anchor = 0.0;
+            double exact_batch_duration = 0.0;
+            bool exact_batch_active = false;
 
-                if (virtual_clock_ > now + 0.5 || virtual_clock_ < now - 2.0) {
+            for (const auto& s : samples) {
+                if (s.batch_start && s.has_exact_timestamp) {
+                    exact_batch_active = true;
+                    if (exact_clock_started_ && s.sample_period > 0.0) {
+                        exact_batch_anchor = virtual_clock_ + s.sample_period;
+                    } else {
+                        exact_batch_anchor = virtual_clock_;
+                        exact_clock_started_ = true;
+                    }
+                    exact_batch_duration =
+                        (s.batch_anchor_time > 0.0 &&
+                         s.batch_anchor_time > s.timestamp)
+                        ? s.batch_anchor_time - s.timestamp : 0.0;
+                }
+
+                if (s.gap_marker) {
+                    double gap_time = s.timestamp;
+                    if (s.batch_anchor_time > 0.0) {
+                        gap_time = now - (s.batch_anchor_time - s.timestamp);
+                    }
+                    for (auto& kv : ch_buffers_) {
+                        kv.second.AddPoint(gap_time, NAN);
+                    }
+                    time_last_ = gap_time;
+                    if (is_recording_ && record_file_.is_open()) {
+                        record_file_ << gap_time;
+                        const auto& channels = parser_.GetChannels();
+                        for (size_t i = 0; i < channels.size(); i++) {
+                            auto it = last_csv_values_.find((int)i);
+                            if (csv_forward_fill_ &&
+                                it != last_csv_values_.end()) {
+                                record_file_ << "," << it->second;
+                            } else {
+                                record_file_ << ",";
+                            }
+                        }
+                        record_file_ << "\n";
+                    }
+                    continue;
+                }
+
+                if (s.has_exact_timestamp && s.batch_anchor_time > 0.0 &&
+                    s.sample_period > 0.0 && exact_batch_active) {
+                    double offset = s.batch_anchor_time - s.timestamp;
+                    virtual_clock_ =
+                        exact_batch_anchor + exact_batch_duration - offset;
+                } else if (s.has_exact_timestamp) {
                     virtual_clock_ = now;
+                } else {
+                    virtual_clock_ += smoothed_period_;
+                    if (virtual_clock_ > now + 0.5 ||
+                        virtual_clock_ < now - 2.0) {
+                        virtual_clock_ = now;
+                    }
                 }
 
                 time_last_ = virtual_clock_;
@@ -121,6 +211,14 @@ void SharedState::FetchNetworkData() {
                         auto it = s.ch_values.find(i);
                         if (it != s.ch_values.end()) {
                             record_file_ << "," << it->second;
+                            last_csv_values_[(int)i] = it->second;
+                        } else if (csv_forward_fill_) {
+                            auto last = last_csv_values_.find((int)i);
+                            if (last != last_csv_values_.end()) {
+                                record_file_ << "," << last->second;
+                            } else {
+                                record_file_ << ",";
+                            }
                         } else {
                             record_file_ << ",";
                         }

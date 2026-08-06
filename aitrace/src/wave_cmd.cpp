@@ -125,6 +125,21 @@ int wave_main(int argc, char* argv[]) {
         size_t n_ok = 0, n_crc = 0, n_gap = 0, n_bytes = 0;
         size_t tot_ok = 0, tot_crc = 0, tot_gap = 0;
 
+        auto rd16 = [](const std::vector<uint8_t>& b, size_t off) -> uint16_t {
+            return (uint16_t)(b[off] | ((uint16_t)b[off + 1] << 8));
+        };
+        auto crc16 = [](const uint8_t* p, size_t len) -> uint16_t {
+            uint16_t crc = 0xFFFF;
+            for (size_t k = 0; k < len; k++) {
+                crc ^= (uint16_t)p[k] << 8;
+                for (int bit = 0; bit < 8; bit++) {
+                    crc = (crc & 0x8000) ? (uint16_t)((crc << 1) ^ 0x1021)
+                                         : (uint16_t)(crc << 1);
+                }
+            }
+            return crc;
+        };
+
         /* Parse buffered frames; statistics are only accumulated when
          * 'counting' is true (warmup parses silently to sync up and learn
          * the descriptor). */
@@ -148,6 +163,53 @@ int wave_main(int argc, char* argv[]) {
                     } else {
                         if (counting) n_crc++;
                         i += 1;
+                    }
+                    continue;
+                }
+                if (third == 0xFE) { // metadata frame
+                    const size_t flen = 13;
+                    if (i + flen > buf.size()) break;
+                    uint8_t crc = 0xFF;
+                    for (size_t k = i + 2; k < i + flen - 1; k++) crc ^= buf[k];
+                    if (crc == buf[i + flen - 1]) {
+                        i += flen;
+                    } else {
+                        if (counting) n_crc++;
+                        i += 1;
+                    }
+                    continue;
+                }
+                if (third == 0xFC || third == 0xFA) { // batch / snapshot
+                    const size_t min_header = (third == 0xFA) ? 19 : 15;
+                    if (i + min_header > buf.size()) break;
+                    uint8_t ch_count = buf[i + 4];
+                    uint16_t sample_count = rd16(buf, i + 9);
+                    size_t local_mask = (ch_count + 7) / 8;
+                    if (local_mask < 1) local_mask = 1;
+                    size_t off = i + min_header;
+                    bool incomplete = false;
+                    for (uint16_t s = 0; s < sample_count; s++) {
+                        if (off + local_mask > buf.size()) {
+                            incomplete = true;
+                            break;
+                        }
+                        int active = 0;
+                        for (size_t m = 0; m < local_mask; m++) {
+                            uint8_t b = buf[off + m];
+                            for (; b; active++) b &= (uint8_t)(b - 1);
+                        }
+                        off += local_mask + 2 * (size_t)active;
+                    }
+                    if (incomplete) break;
+                    size_t flen = off - i + 2;
+                    if (i + flen > buf.size()) break;
+                    uint16_t crc = rd16(buf, off);
+                    if (crc == crc16(&buf[i + 2], off - (i + 2))) {
+                        if (counting) n_ok++;
+                        i += flen;
+                    } else {
+                        if (counting) n_crc++;
+                        i += flen;
                     }
                     continue;
                 }

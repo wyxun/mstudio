@@ -26,11 +26,11 @@ vpath %.cpp $(SRC_TOP) $(SRC_TOP)/utils
 all: $(TARGET)
 
 $(TARGET): $(OBJS)
-	@mkdir -p $(BUILD_DIR)
+	@if not exist $(BUILD_DIR) mkdir $(BUILD_DIR)
 	$(AR) rcs $@ $^
 
 $(BUILD_DIR)/%.cpp.o: %.cpp
-	@mkdir -p $(BUILD_DIR)
+	@if not exist $(BUILD_DIR) mkdir $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
 clean:
