@@ -106,6 +106,23 @@ static std::vector<uint8_t> MakeSnapshot() {
     return f;
 }
 
+static std::vector<uint8_t> MakeSnapshotOneSample() {
+    std::vector<uint8_t> f;
+    f.push_back(0xAA); f.push_back(0x55); f.push_back(0xFA);
+    f.push_back(1);
+    f.push_back(2);
+    PutU32(f, 30u);
+    PutU16(f, 1);
+    PutU32(f, 50000u);
+    PutU32(f, 8u);
+
+    f.push_back(0x01);
+    PutU16(f, 42);
+
+    PutU16(f, Crc16(f, 2));
+    return f;
+}
+
 int main() {
     ProtocolParser parser(8);
     std::vector<DataSample> samples;
@@ -140,6 +157,12 @@ int main() {
     assert(parser.GetLastSnapshotId() == 7u);
     assert(parser.GetSnapshotRateHz() > 19999.0 &&
            parser.GetSnapshotRateHz() < 20001.0);
+
+    samples.clear();
+    parser.Feed(MakeSnapshotOneSample(), samples);
+    assert(samples.size() == 1);
+    assert(samples[0].sample_index == 30u);
+    assert(samples[0].ch_values.at(0) == 42.0f);
 
     std::vector<uint8_t> bad = MakeBatch();
     bad[bad.size() - 1] ^= 0xFF;
