@@ -1,0 +1,26 @@
+{
+  "name": "@wx/mstudio-dsh",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./lib/index.d.ts",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "build": "node ../../deepseek-harness/node_modules/.bin/tsc -p tsconfig.json",
+    "test": "node ../../deepseek-harness/node_modules/.bin/vitest run"
+  },
+  "dependencies": {
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/dsh-tools": "*",
+    "@deepseek-ai/dsh-subprocess": "*",
+    "@deepseek-ai/dsh-user-approval": "*",
+    "@deepseek-ai/schemastery": "*",
+    "@deepseek-ai/dsh-agent": "*"
+  },
+  "devDependencies": {}
+}

@@ -1,0 +1,37 @@
+{
+  "extends": "../../deepseek-harness/tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "lib",
+    "declaration": true,
+    "declarationMap": false,
+    "noEmit": false,
+    "composite": false,
+    "typeRoots": ["../../deepseek-harness/node_modules/@types"],
+    "paths": {
+      "@deepseek-ai/cordis": ["../../deepseek-harness/vendor/cordis/lib/types"],
+      "@deepseek-ai/cosmokit": ["../../deepseek-harness/vendor/cosmokit/lib/types"],
+      "@deepseek-ai/schemastery": ["../../deepseek-harness/vendor/schemastery/lib/types"],
+      "@deepseek-ai/dsh-*": [
+        "../../deepseek-harness/packages/core/*/lib/types",
+        "../../deepseek-harness/packages/subprocess/*/lib/types",
+        "../../deepseek-harness/packages/interaction/*/lib/types",
+        "../../deepseek-harness/packages/shell/*/lib/types",
+        "../../deepseek-harness/packages/skill/*/lib/types",
+        "../../deepseek-harness/packages/jobs/*/lib/types",
+        "../../deepseek-harness/packages/llm/*/lib/types",
+        "../../deepseek-harness/packages/fs/*/lib/types",
+        "../../deepseek-harness/packages/session/*/lib/types",
+        "../../deepseek-harness/packages/workflow/*/lib/types",
+        "../../deepseek-harness/packages/subagent/*/lib/types",
+        "../../deepseek-harness/packages/goal/*/lib/types",
+        "../../deepseek-harness/packages/mcp/*/lib/types",
+        "../../deepseek-harness/packages/preset/*/lib/types",
+        "../../deepseek-harness/packages/guard/*/lib/types",
+        "../../deepseek-harness/packages/context/*/lib/types",
+        "../../deepseek-harness/packages/plan/*/lib/types"
+      ]
+    }
+  },
+  "include": ["src"]
+}

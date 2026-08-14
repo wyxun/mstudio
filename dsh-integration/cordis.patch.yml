@@ -1,0 +1,11 @@
+# mstudio-dsh bundle patch: mounts the aitrace and kicad tool plugins.
+- insert:
+    - id: mstudio-aitrace
+      name: '@wx/mstudio-dsh'
+      config:
+        workDir: D:/2_xundoc/project/modus_template
+        aitracePath: tools/aitrace.exe
+        elfPath: build/template.elf
+        mapPath: build/template.map
+        captureDir: captures
+        approval: true

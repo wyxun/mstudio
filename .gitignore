@@ -9,3 +9,8 @@ CLAUDE.md
 *.exe
 /build
 *.png
+# dsh-integration build artifacts
+dsh-integration/node_modules/
+dsh-integration/lib/
+dsh-integration/*.tsbuildinfo
+dsh-integration/_sample_*
