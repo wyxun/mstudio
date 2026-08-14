@@ -24,7 +24,9 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 # ── 0. detect mode and repo locations ───────────────────────────────────────
 $packMode = Test-Path (Join-Path $scriptDir "mstudio-dsh")
-$sourceMode = Test-Path (Join-Path $scriptDir "package.json")
+# Source layout: this script lives in <repo>/dsh-integration/tools/install.ps1,
+# so package.json sits two levels up.
+$sourceMode = -not $packMode -and (Test-Path (Join-Path $scriptDir "..\package.json"))
 
 if ($packMode) {
     Write-Host "[MODE] bundle install (lib prebuilt, no build)" -ForegroundColor Cyan
@@ -36,7 +38,7 @@ if ($packMode) {
 }
 
 if ($sourceMode) {
-    $mstudioPkg = $scriptDir
+    $mstudioPkg = Split-Path -Parent $scriptDir   # <repo>/dsh-integration
     if (-not $MStudioDir) { $MStudioDir = Split-Path -Parent $mstudioPkg }
 }
 # probe kicad-auditor as a sibling of mstudio (or of this script in bundle mode)
@@ -66,7 +68,7 @@ if ($Build) {
         if ($LASTEXITCODE -ne 0) { Write-Host "[ERROR] $label build failed" -ForegroundColor Red; Pop-Location; exit 1 }
         Pop-Location
     }
-    Invoke-Build $scriptDir "mstudio-dsh"
+    Invoke-Build $mstudioPkg "mstudio-dsh"
     if (-not $SkipKicad) { Invoke-Build (Join-Path $KicadAuditorDir "dsh-integration") "kicad-auditor-dsh" }
 }
 
@@ -80,14 +82,55 @@ if (-not (Test-Path $ProfileDir)) {
 New-Item -ItemType Directory -Path $wxDir -Force | Out-Null
 
 # ── 3. deploy plugins ────────────────────────────────────────────────────────
-function Install-Pkg { param([string]$name, [string]$libSrc)
+# Source mode builds into <pkg>/lib and keeps package.json at the package root;
+# bundle mode ships <stage>/<name>/{lib,package.json}. The deployed package must
+# carry BOTH lib/ and package.json (Node needs the package entry to resolve the
+# plugin), plus its @deepseek-ai/* runtime deps linked into the profile.
+$mstudioPkgDir = if ($sourceMode) { $mstudioPkg } else { Join-Path $scriptDir "mstudio-dsh" }
+$kicadPkgDir = Join-Path $KicadAuditorDir "dsh-integration"
+$kicadStageDir = if ($sourceMode) { $kicadPkgDir } else { Join-Path $scriptDir "kicad-auditor-dsh" }
+
+function Install-Pkg { param([string]$name, [string]$pkgSrc)
     $dest = Join-Path $wxDir $name
     Remove-Item $dest -Recurse -Force -ErrorAction SilentlyContinue
-    Copy-Item $libSrc -Destination "$dest\lib" -Recurse -Force
+    New-Item -ItemType Directory -Path $dest -Force | Out-Null
+    Copy-Item (Join-Path $pkgSrc "lib") -Destination "$dest\lib" -Recurse -Force
+    $pkgJson = Join-Path $pkgSrc "package.json"
+    if (Test-Path $pkgJson) {
+        Copy-Item $pkgJson -Destination $dest -Force
+    } else {
+        Write-Host "[WARN] ${name}: no package.json at ${pkgSrc} (Node cannot resolve the package entry)" -ForegroundColor Yellow
+    }
     Write-Host "[OK] deployed $name" -ForegroundColor Green
 }
-Install-Pkg "mstudio-dsh" "$scriptDir\mstudio-dsh\lib"
-if (-not $SkipKicad) { Install-Pkg "kicad-auditor-dsh" "$scriptDir\kicad-auditor-dsh\lib" }
+Install-Pkg "mstudio-dsh" $mstudioPkgDir
+if (-not $SkipKicad) { Install-Pkg "kicad-auditor-dsh" $kicadStageDir }
+
+# ── 3b. link @deepseek-ai/* runtime deps into the profile ────────────────────
+# The plugin bundles import @deepseek-ai/schemastery and @deepseek-ai/dsh-tools
+# at runtime; the profile's own node_modules only holds @wx. Link the built
+# workspace packages from a deepseek-harness checkout (sibling of mstudio in
+# source mode; auto-detected otherwise) so Node resolves them.
+function Invoke-EnsureDepLink { param([string]$dep, [string]$src)
+    $dest = Join-Path $ProfileDir "node_modules\@deepseek-ai"
+    New-Item -ItemType Directory -Path $dest -Force | Out-Null
+    $link = Join-Path $dest $dep
+    if (Test-Path $link) {
+        $item = Get-Item $link
+        if ($item.LinkType) { Write-Host "[OK] dep linked: @deepseek-ai/$dep ($($item.Target))" -ForegroundColor Green; return }
+        Remove-Item $link -Recurse -Force
+    }
+    if (-not (Test-Path $src)) {
+        Write-Host "[WARN] @deepseek-ai/$dep source not found at $src — plugin will fail at load" -ForegroundColor Yellow
+        return
+    }
+    New-Item -ItemType Junction -Path $link -Target $src | Out-Null
+    Write-Host "[OK] dep linked: @deepseek-ai/$dep -> $src" -ForegroundColor Green
+}
+$dshRoot = if ($sourceMode) { Join-Path $MStudioDir "..\deepseek-harness" } else { Join-Path $ProfileDir "..\..\..\deepseek-harness" }
+$dshRoot = [System.IO.Path]::GetFullPath($dshRoot)
+Invoke-EnsureDepLink "schemastery" (Join-Path $dshRoot "vendor\schemastery")
+Invoke-EnsureDepLink "dsh-tools" (Join-Path $dshRoot "packages\core\tools")
 
 # ── 4. generate/update profile patch with machine-local paths ───────────────
 if (-not $ModusTemplateDir -and $MStudioDir) {
@@ -135,7 +178,15 @@ if (Test-Path $patchFile) {
         $pattern = "(?s)$([regex]::Escape($patchBegin)).*?$([regex]::Escape($patchEnd))"
         $content = [regex]::Replace($content, $pattern, $block)
     } else {
-        $content = $content.TrimEnd() + "`r`n`r`n" + $block
+        # A lone `[]` is the stock empty patch (or a file that is only comments).
+        # Appending a second top-level YAML document breaks parsing, so replace
+        # the whole file with the managed block instead.
+        $trimmed = $content.Trim()
+        if ($trimmed -eq '[]') {
+            $content = $block
+        } else {
+            $content = $content.TrimEnd() + "`r`n`r`n" + $block
+        }
     }
     [System.IO.File]::WriteAllText($patchFile, $content, $utf8Bom)
 } else {
@@ -144,9 +195,23 @@ if (Test-Path $patchFile) {
 Write-Host "[OK] profile patch updated: $patchFile" -ForegroundColor Green
 
 # ── 5. install skills from repo copies ───────────────────────────────────────
+# Source mode: each repo ships its own skill (mstudio: aitrace, kicad-auditor:
+# kicad-auditor). Bundle mode: both skills are staged under one skills/ dir.
 $agentsSkills = Join-Path $env:USERPROFILE ".agents\skills"
 New-Item -ItemType Directory -Path $agentsSkills -Force | Out-Null
-foreach ($skillDir in @("$scriptDir\skills\kicad-auditor", "$scriptDir\skills\aitrace")) {
+$skillCandidates = @()
+if ($sourceMode) {
+    $skillCandidates += @(
+        (Join-Path $mstudioPkg "skills\aitrace"),
+        (Join-Path $kicadPkgDir "skills\kicad-auditor")
+    )
+} else {
+    $skillCandidates += @(
+        (Join-Path $scriptDir "skills\aitrace"),
+        (Join-Path $scriptDir "skills\kicad-auditor")
+    )
+}
+foreach ($skillDir in $skillCandidates) {
     if (Test-Path $skillDir) {
         $name = Split-Path -Leaf $skillDir
         $dest = Join-Path $agentsSkills $name
@@ -161,8 +226,14 @@ Write-Host ""
 Write-Host "===== toolchain check =====" -ForegroundColor Cyan
 $checks = @()
 if (Test-Path "$wxDir\mstudio-dsh\lib\index.js") { $checks += "[OK] mstudio-dsh plugin in place" } else { $checks += "[!!] mstudio-dsh plugin MISSING" }
+if (Test-Path "$wxDir\mstudio-dsh\package.json") { $checks += "[OK] mstudio-dsh package.json" } else { $checks += "[!!] mstudio-dsh package.json MISSING (Node cannot resolve the plugin)" }
 if (-not $SkipKicad) {
     if (Test-Path "$wxDir\kicad-auditor-dsh\lib\index.js") { $checks += "[OK] kicad-auditor-dsh plugin in place" } else { $checks += "[!!] kicad-auditor-dsh plugin MISSING" }
+    if (Test-Path "$wxDir\kicad-auditor-dsh\package.json") { $checks += "[OK] kicad-auditor-dsh package.json" } else { $checks += "[!!] kicad-auditor-dsh package.json MISSING (Node cannot resolve the plugin)" }
+}
+foreach ($dep in @("schemastery", "dsh-tools")) {
+    $link = Join-Path $ProfileDir "node_modules\@deepseek-ai\$dep"
+    if (Test-Path $link) { $checks += "[OK] dep linked: @deepseek-ai/$dep" } else { $checks += "[!!] dep @deepseek-ai/$dep MISSING (plugin will fail at load)" }
 }
 if (Test-Path "$env:USERPROFILE\.agents\skills\kicad-auditor\SKILL.md") { $checks += "[OK] skill: kicad-auditor" } else { $checks += "[!!] skill: kicad-auditor MISSING" }
 if (Test-Path "$env:USERPROFILE\.agents\skills\aitrace\SKILL.md") { $checks += "[OK] skill: aitrace" } else { $checks += "[!!] skill: aitrace MISSING" }
