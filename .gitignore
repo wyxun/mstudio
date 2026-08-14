@@ -14,3 +14,6 @@ dsh-integration/node_modules/
 dsh-integration/lib/
 dsh-integration/*.tsbuildinfo
 dsh-integration/_sample_*
+
+# deployment bundle artifact
+mstudio-dsh-home.zip
