@@ -140,6 +140,24 @@ To maximize debugging safety and efficiency, follow the **Double-Track Debugging
 | **Logic & Code Flow** | `.\make.bat` (`BUILD=debug`) | `-O0` (No optimization) | VS Code Graphical F5 (Cortex-Debug) | Precise step-by-step debug, values of local variables are 100% visible (no `<optimized out>`). |
 | **Tuning, Waveforms & Timing** | `mingw32-make BUILD=debug-rel` followed by the required flash/RTT commands | `-Oz` | `mstudio` / `aitrace` (Passive wave/shell) | Release-like code generation while retaining debug modules. |
 
+## Link to Coding Rules (embedded-coding skill)
+
+Coding rules live in the `embedded-coding` skill. When debugging points to a
+code defect, connect the finding back to the rule it violates:
+
+- HardFault / crash (crash_report, map_resolve) → check MISRA violations:
+  unchecked return values (17.7), uninitialized locals (9.1), pointer misuse.
+- Unexpected variable values (gdb print, ocd peek) → check implicit casts (10.3),
+  signed/unsigned mixing (10.4), out-of-bounds access.
+- Waveform anomalies (wave capture) → check state-machine constraints:
+  blocking delays inside states, missing timeout transitions, unprotected
+  state switches.
+- Missing/unreadable debug data → the module likely lacks observability hooks
+  (state-change mdebug prints, waveform channels); ask for them per the
+  embedded-coding observability section before continuing.
+
+After fixing a code defect found via debugging, rerun that module's TDD tests.
+
 ## FAQ & Troubleshooting
 
 ### 1. `Failed to write memory` or `can't assert SRST`
